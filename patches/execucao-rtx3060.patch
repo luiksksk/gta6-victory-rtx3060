@@ -1,0 +1,573 @@
+diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
+index 27655d155831a7d09a232ceca15b1d2753634efe..1c293d7eaf9e8f9f60372c964ead26ff4f5155ac 100644
+--- a/crates/victory-gpu/src/descriptor/host.rs
++++ b/crates/victory-gpu/src/descriptor/host.rs
+@@ -60,8 +60,7 @@ impl HostHeap {
+         let (heap, count) = match make(count + extra) {
+             Ok(heap) => (heap, count),
+             Err(e) if !sampler && count + extra > PORTABLE_VIEWS => {
+-                // shortcut: descriptors past the host's limit are left out;
+-                // a title that reaches them needs remapping.
++                // Tables reaching past the mirror are copied by the draw.
+                 tracing::warn!(error = %e, count, "host view heap capped at {PORTABLE_VIEWS}");
+                 (make(PORTABLE_VIEWS).ok()?, PORTABLE_VIEWS - extra)
+             }
+@@ -212,6 +211,12 @@ impl HostHeap {
+         }
+     }
+ 
++    /// Whether the title's slot has the same index on the host. Slots after
++    /// the mirror belong to the dynamic allocator, even inside the heap.
++    pub(crate) fn mirrors(&self, index: u32) -> bool {
++        index < self.count
++    }
++
+     /// Makes slot `index` (a dynamic one) from `view`; a null view if the
+     /// host cannot.
+     pub(crate) fn make_at(&self, index: u32, view: &View) {
+@@ -255,7 +260,7 @@ impl HostHeap {
+     /// views are made only for draws (`for_draw`), which also copy their
+     /// data: a host copy of a buffer is made on first use.
+     pub(crate) fn mirror(&self, index: u32, handle: u64, for_draw: bool) -> Option<View> {
+-        if index >= self.count {
++        if !self.mirrors(index) {
+             return None;
+         }
+         // SAFETY: the handle is a descriptor slot in title memory.
+diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
+index e7a3ec41a04c06c6d036c2200c345aaf360bcbee..3627c7b9294f4ef34c96bcf851a7b8c7093971fc 100644
+--- a/crates/victory-gpu/src/draw.rs
++++ b/crates/victory-gpu/src/draw.rs
+@@ -332,7 +332,9 @@ impl State {
+             once!(mesh, "a draw or mesh dispatch with another kind of pipeline");
+             return false;
+         }
+-        self.bind(list, p, false);
++        if !self.bind(list, p, false) {
++            return false;
++        }
+         let l = &list.list;
+         // Vertex buffers the input layout reads.
+         let mut views = [D3D12_VERTEX_BUFFER_VIEW::default(); 32];
+@@ -391,7 +393,7 @@ impl State {
+     /// What draws and dispatches share: heaps, our root signature, the
+     /// pipeline, and per stage the user data, root views and the
+     /// descriptors its tables hold.
+-    fn bind(&mut self, list: &HostList, p: &HostPipeline, compute: bool) {
++    fn bind(&mut self, list: &HostList, p: &HostPipeline, compute: bool) -> bool {
+         let l = &list.list;
+         // Heaps first: a root signature with directly indexed heaps must be
+         // set after them.
+@@ -426,9 +428,13 @@ impl State {
+             self.host_pipeline = self.pipeline;
+             list.used_pipeline(&p.name);
+         }
++        // A root table is shared by all the stages that read its slot. Use
++        // their combined range when relocating it and give each the same base.
++        let Some(made) = self.tables(list, &p.table_resources, compute) else {
++            return false;
++        };
+         for stage in &p.stages {
+             let t = stage.translated();
+-            let made = self.tables(list, &t.used, compute);
+             if let Some((param, dwords)) = stage.user_data {
+                 let mut values = vec![0u32; dwords as usize];
+                 for u in &t.host.user_data {
+@@ -471,6 +477,7 @@ impl State {
+                 }
+             }
+         }
++        true
+     }
+ 
+     /// Runs a dispatch on the host.
+@@ -486,7 +493,9 @@ impl State {
+             once!("a dispatch with a graphics pipeline");
+             return;
+         }
+-        self.bind(list, p, true);
++        if !self.bind(list, p, true) {
++            return;
++        }
+         #[cfg(feature = "diagnostics")]
+         list.note_op(|| self.op_text(format!("dispatch {x}x{y}x{z}"), true));
+         // SAFETY: an open list with everything set.
+@@ -564,24 +573,8 @@ impl State {
+         }
+     }
+ 
+-    fn table_entry(&self, list: &HostList, u: &UsedResource, compute: bool) {
+-        let Some(Root::Table(table)) = self.roots_ref(compute).get(usize::from(u.slot)) else {
+-            return;
+-        };
+-        let handle = table + u64::from(u.table_offset_dwords) * 4;
+-        let Some(heap) = self.heap_of(handle) else {
+-            return;
+-        };
+-        let (Some(host), Some(index)) = (heap.host(), heap.index(handle)) else {
+-            return;
+-        };
+-        if let Some(view) = host.mirror(index, handle, true) {
+-            readable(list, u, &view);
+-        }
+-    }
+-
+     /// The descriptors a shader reads through tables. Tables holding a
+-    /// constant buffer are made afresh for the draw in dynamic slots, with
++    /// constant buffer or extending past the host mirror are made in dynamic slots, with
+     /// the constant data copied to upload memory when the list is
+     /// submitted: the host wants constant buffers 256-byte aligned, the
+     /// console only 16. Returns those tables' new byte offsets by root
+@@ -591,42 +584,35 @@ impl State {
+     /// once: its constant data is copied at submission either way, and the
+     /// big tables the world binds would otherwise take hundreds of slots per
+     /// draw, wrapping the dynamic slots onto lists not yet submitted.
+-    fn tables(&mut self, list: &HostList, used: &[UsedResource], compute: bool) -> Vec<(u8, u32)> {
+-        let tables = |u: &&UsedResource| u.root == RootType::Table;
+-        let mut fresh: Vec<u8> = used
+-            .iter()
+-            .filter(tables)
+-            .filter(|u| u.kind == ResourceType::Cbv)
+-            .map(|u| u.slot)
+-            .collect();
+-        fresh.sort_unstable();
+-        fresh.dedup();
+-        for u in used.iter().filter(tables) {
+-            if !fresh.contains(&u.slot) {
+-                self.table_entry(list, u, compute);
+-            }
+-        }
++    fn tables(&mut self, list: &HostList, used: &[UsedResource], compute: bool) -> Option<Vec<(u8, u32)>> {
+         let mut made = Vec::new();
+-        for slot in fresh {
++        for entries in used.chunk_by(|a, b| a.slot == b.slot) {
++            let slot = entries[0].slot;
+             let Some(&Root::Table(table)) = self.roots_ref(compute).get(usize::from(slot)) else {
+                 continue;
+             };
+-            let entries: Vec<&UsedResource> = used
+-                .iter()
+-                .filter(tables)
+-                .filter(|u| u.slot == slot)
+-                .collect();
+             let Some(heap) = self.heap_of(table) else {
+                 continue;
+             };
+             let Some(host) = heap.host() else {
+                 continue;
+             };
+-            let n = entries
+-                .iter()
+-                .map(|u| u.table_offset_dwords / 8 + 1)
+-                .max()
+-                .unwrap_or(1);
++            let last_offset = entries.last()?.table_offset_dwords;
++            let last_handle = table.checked_add(u64::from(last_offset) * 4)?;
++            let Some(last_index) = heap.index(last_handle) else {
++                once!(slot, last_offset, "a shader table extends past its title heap");
++                return None;
++            };
++            if host.mirrors(last_index) && entries.iter().all(|u| u.kind != ResourceType::Cbv) {
++                for u in entries {
++                    let handle = table + u64::from(u.table_offset_dwords) * 4;
++                    if let Some(view) = host.mirror(heap.index(handle)?, handle, true) {
++                        readable(list, u, &view);
++                    }
++                }
++                continue;
++            }
++            let n = last_offset / 8 + 1;
+             // The table and what its entries hold (record words).
+             let key = {
+                 use std::hash::{Hash, Hasher};
+@@ -648,9 +634,15 @@ impl State {
+                 made.push((slot, first * 32));
+                 continue;
+             }
+-            let Some(first) = host.dynamic(n) else {
+-                continue;
+-            };
++            let first = host.dynamic(n)?;
++            #[cfg(feature = "diagnostics")]
++            if !host.mirrors(last_index) {
++                static FIRST: std::sync::Once = std::sync::Once::new();
++                FIRST.call_once(|| {
++                    tracing::info!(frame = crate::queue::presented() + 1, slot, title_first = ?heap.index(table),
++                        host_first = first, descriptors = n, "relocated a table beyond the host descriptor mirror");
++                });
++            }
+             self.fresh_tables.insert(key, first);
+             self.dynamic
+                 .push((std::ptr::from_ref(heap) as usize, first, n));
+@@ -684,7 +676,7 @@ impl State {
+             }
+             made.push((slot, first * 32));
+         }
+-        made
++        Some(made)
+     }
+ 
+     /// The first draws, at debug level: what they bind and read
+diff --git a/crates/victory-gpu/src/pipeline/host.rs b/crates/victory-gpu/src/pipeline/host.rs
+index fd413f17ea79a6825ac0b8a9a9c8ad0175226026..1179430077365e173edd3f8e7425fd0ea736a0e7 100644
+--- a/crates/victory-gpu/src/pipeline/host.rs
++++ b/crates/victory-gpu/src/pipeline/host.rs
+@@ -9,6 +9,7 @@ use std::ffi::{CStr, CString};
+ use std::sync::Arc;
+ 
+ use victory_shader::emit::{ROOT_CBV_SPACE, SAMPLER_SPACE, USER_DATA_SPACE};
++use victory_shader::{RootType, UsedResource};
+ use windows::Win32::Graphics::Direct3D::ID3DBlob;
+ use windows::Win32::Graphics::Direct3D12::*;
+ use windows::Win32::Graphics::Dxgi::Common::*;
+@@ -242,6 +243,9 @@ pub(crate) struct HostPipeline {
+     pub(crate) root: ID3D12RootSignature,
+     /// Vertex, then pixel stage, or the compute stage.
+     pub(crate) stages: Vec<Stage>,
++    /// Entries of each title root table across all the stages sharing it,
++    /// grouped by root slot and ordered by descriptor offset.
++    pub(crate) table_resources: Vec<UsedResource>,
+     /// The vertex buffer slots it reads (bit per slot).
+     pub(crate) slots: u32,
+     pub(crate) inputs: Vec<Input>,
+@@ -373,6 +377,7 @@ impl HostPipeline {
+             }
+             bound.push(stage);
+         }
++        let table_resources = table_resources(bound.iter().map(|s| s.translated().used.as_slice()));
+         let root = match root_signature(&host.device, &params, &samplers, compute.is_some()) {
+             Ok(root) => root,
+             Err(e) => {
+@@ -412,6 +417,7 @@ impl HostPipeline {
+                 pso,
+                 root,
+                 stages: bound,
++                table_resources,
+                 name: format!("{shaders:?}"),
+                 slots: 0,
+                 inputs: Vec::new(),
+@@ -436,6 +442,7 @@ impl HostPipeline {
+                 pso,
+                 root,
+                 stages: bound,
++                table_resources,
+                 name: format!("{shaders:?}"),
+                 slots: 0,
+                 inputs: Vec::new(),
+@@ -493,6 +500,7 @@ impl HostPipeline {
+             pso,
+             root,
+             stages: bound,
++            table_resources,
+             name: format!("{shaders:?}"),
+             slots: g.slots(),
+             inputs: g.elements(),
+@@ -500,6 +508,43 @@ impl HostPipeline {
+     }
+ }
+ 
++fn table_resources<'a>(stages: impl Iterator<Item = &'a [UsedResource]>) -> Vec<UsedResource> {
++    let mut resources: Vec<_> = stages
++        .flatten()
++        .filter(|u| u.root == RootType::Table)
++        .copied()
++        .collect();
++    resources.sort_by_key(|u| (u.slot, u.table_offset_dwords));
++    resources
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use victory_shader::ResourceType;
++
++    #[test]
++    fn stages_sharing_a_table_keep_all_its_entries() {
++        let entry = |kind, offset| UsedResource {
++            kind,
++            root: RootType::Table,
++            table_offset_dwords: offset,
++            lower_bound: 0,
++            stride: 0,
++            dwords: 8,
++            user_data: 8,
++            slot: 0,
++        };
++        let vertex = [entry(ResourceType::Srv, 0), entry(ResourceType::Cbv, 16)];
++        let pixel = [entry(ResourceType::Srv, 8), UsedResource {
++            root: RootType::ImmediateSampler,
++            ..entry(ResourceType::Sampler, 0)
++        }];
++        let used = table_resources([vertex.as_slice(), pixel.as_slice()].into_iter());
++        assert_eq!(used, [vertex[0], pixel[0], vertex[1]]);
++    }
++}
++
+ /// A mesh pipeline from the title's graphics state: the pipeline-state
+ /// stream form (no input layout or topology).
+ fn mesh_pipeline(
+diff --git a/crates/victory-hle/src/modules/gameinput.rs b/crates/victory-hle/src/modules/gameinput.rs
+index a411bd0f4a7dc2b970ac6f90a7e2048fd7fddd26..8b5f43d6dbfa5bc56c2cbc10079d927cce64f1c9 100644
+--- a/crates/victory-hle/src/modules/gameinput.rs
++++ b/crates/victory-hle/src/modules/gameinput.rs
+@@ -403,8 +403,9 @@ impl Hub {
+     fn poll(&self) {
+         let (pads, keys) = {
+             let mut source = lock(&self.source);
++            let keys = source.keys();
+             let pads: [_; PADS] = std::array::from_fn(|slot| source.pad(slot));
+-            (pads, source.keys())
++            (pads, keys)
+         };
+         let events = self.state().poll(&self.devices, pads, keys);
+         self.deliver(events);
+@@ -1130,6 +1131,10 @@ mod host {
+     #[derive(Default)]
+     pub(super) struct Host {
+         empty_until: [Option<Instant>; PADS],
++        #[cfg(feature = "diagnostics")]
++        scripted_keys: Vec<u8>,
++        #[cfg(feature = "diagnostics")]
++        live: LiveKeys,
+     }
+ 
+     impl Source for Host {
+@@ -1144,12 +1149,15 @@ mod host {
+                 return None;
+             }
+             self.empty_until[slot] = None;
+-            Some(convert(&state.Gamepad))
++            let pad = convert(&state.Gamepad);
++            #[cfg(feature = "diagnostics")]
++            let pad = self.with_scripted_input(slot, pad);
++            Some(pad)
+         }
+ 
+         fn keys(&mut self) -> Vec<KeyState> {
+             #[cfg(feature = "diagnostics")]
+-            let mut down = scripted();
++            let mut down = self.scripted();
+             #[cfg(not(feature = "diagnostics"))]
+             let mut down = Vec::new();
+             if focused() {
+@@ -1184,43 +1192,141 @@ mod host {
+         }
+     }
+ 
+-    /// Debugging aid: `VICTORY_KEYS=<seconds>:<key>,...` holds each key for
+-    /// 0.2 s that long after input starts, with or without focus. A key is a
+-    /// letter, a digit, or `Enter`, `Esc`, `Tab`, `Back`, `Up`, `Down`,
+-    /// `Left`, `Right` (the stand-in pad's table maps them to buttons).
+     #[cfg(feature = "diagnostics")]
+-    fn scripted() -> Vec<u8> {
+-        static SCRIPT: LazyLock<(Instant, Vec<(Duration, u8)>)> = LazyLock::new(|| {
+-            let list = std::env::var("VICTORY_KEYS").unwrap_or_default();
+-            let keys = list.split(',').filter_map(|entry| {
+-                let (at, key) = entry.split_once(':')?;
+-                let vk = match key.trim() {
+-                    "Enter" => 0x0D,
+-                    "Esc" => 0x1B,
+-                    "Tab" => 0x09,
+-                    "Back" => 0x08,
+-                    "Up" => 0x26,
+-                    "Down" => 0x28,
+-                    "Left" => 0x25,
+-                    "Right" => 0x27,
+-                    k if k.len() == 1 && k.as_bytes()[0].is_ascii_alphanumeric() => {
+-                        k.as_bytes()[0].to_ascii_uppercase()
+-                    }
+-                    _ => return None,
+-                };
+-                Some((
+-                    Duration::try_from_secs_f64(at.trim().parse().ok()?).ok()?,
+-                    vk,
+-                ))
++    impl Host {
++        /// Sample once per poll so the keyboard and slot zero see the same press and release.
++        fn scripted(&mut self) -> Vec<u8> {
++            static SCRIPT: LazyLock<(Instant, Vec<ScheduledKey>)> = LazyLock::new(|| {
++                let list = std::env::var("VICTORY_KEYS").unwrap_or_default();
++                (
++                    Instant::now(),
++                    list.split(',').filter_map(parse_key).collect(),
++                )
+             });
+-            (Instant::now(), keys.collect())
+-        });
+-        let (start, keys) = &*SCRIPT;
+-        let now = start.elapsed();
+-        keys.iter()
+-            .filter(|&&(at, _)| (at..at + Duration::from_millis(200)).contains(&now))
+-            .map(|&(_, vk)| vk)
+-            .collect()
++            static LIVE_PATH: LazyLock<Option<std::path::PathBuf>> = LazyLock::new(|| {
++                std::env::var_os("VICTORY_LIVE_KEYS").filter(|p| !p.is_empty()).map(Into::into)
++            });
++            let (start, keys) = &*SCRIPT;
++            let now = Instant::now();
++            self.scripted_keys_at(keys, now.duration_since(*start), LIVE_PATH.as_deref(), now)
++        }
++
++        fn scripted_keys_at(&mut self, keys: &[ScheduledKey], elapsed: Duration, path: Option<&std::path::Path>, now: Instant) -> Vec<u8> {
++            self.scripted_keys.clear();
++            append_held(keys, elapsed, &mut self.scripted_keys);
++            if let Some(path) = path {
++                self.live.refresh(path, now);
++                if let Some(rev) = &self.live.revision {
++                    append_held(&rev.keys, now.duration_since(rev.start), &mut self.scripted_keys);
++                }
++            }
++            self.scripted_keys.clone()
++        }
++
++        fn with_scripted_input(&self, slot: usize, mut pad: PadState) -> PadState {
++            let down = &self.scripted_keys;
++            if slot != 0 || down.is_empty() {
++                return pad;
++            }
++            pad.buttons |= FALLBACK_BUTTONS.iter().filter(|(vk, _)| down.contains(vk))
++                .fold(0, |bits, (_, button)| bits | button);
++            let axis = |negative: u8, positive: u8, physical: f32| {
++                match (down.contains(&negative), down.contains(&positive)) {
++                    (false, false) => physical,
++                    (true, false) => -1.0,
++                    (false, true) => 1.0,
++                    (true, true) => 0.0,
++                }
++            };
++            pad.left_x = axis(b'A', b'D', pad.left_x);
++            pad.left_y = axis(b'S', b'W', pad.left_y);
++            pad.right_x = axis(b'J', b'L', pad.right_x);
++            pad.right_y = axis(b'K', b'I', pad.right_y);
++            pad
++        }
++    }
++
++    #[cfg(feature = "diagnostics")]
++    #[derive(Default)]
++    struct LiveKeys {
++        next_read: Option<Instant>,
++        revision: Option<KeyRevision>,
++    }
++
++    #[cfg(feature = "diagnostics")]
++    struct KeyRevision {
++        modified: Option<std::time::SystemTime>,
++        contents: String,
++        start: Instant,
++        keys: Vec<ScheduledKey>,
++    }
++
++    #[cfg(feature = "diagnostics")]
++    impl LiveKeys {
++        fn refresh(&mut self, path: &std::path::Path, now: Instant) {
++            use std::io::{ErrorKind, Read};
++
++            if self.next_read.is_some_and(|next| now < next) {
++                return;
++            }
++            self.next_read = Some(now + Duration::from_millis(100));
++            let mut file = match std::fs::File::open(path) {
++                Ok(file) => file,
++                Err(err) if err.kind() == ErrorKind::NotFound => {
++                    self.revision = None;
++                    return;
++                }
++                Err(_) => return,
++            };
++            let modified = file.metadata().ok().and_then(|meta| meta.modified().ok());
++            let mut contents = String::new();
++            if file.read_to_string(&mut contents).is_err()
++                || self.revision.as_ref().is_some_and(|rev| rev.modified == modified && rev.contents == contents)
++            {
++                return;
++            }
++            let keys = contents.trim_start_matches('\u{feff}').split(',').filter_map(parse_key).collect();
++            self.revision = Some(KeyRevision { modified, contents, start: now, keys });
++        }
++    }
++
++    #[cfg(feature = "diagnostics")]
++    type ScheduledKey = (std::ops::Range<Duration>, u8);
++
++    #[cfg(feature = "diagnostics")]
++    fn append_held(keys: &[ScheduledKey], elapsed: Duration, down: &mut Vec<u8>) {
++        for (interval, vk) in keys {
++            if interval.contains(&elapsed) && !down.contains(vk) {
++                down.push(*vk);
++            }
++        }
++    }
++
++    /// The optional final field is the hold duration in seconds.
++    #[cfg(feature = "diagnostics")]
++    fn parse_key(entry: &str) -> Option<ScheduledKey> {
++        let seconds = |s: &str| Duration::try_from_secs_f64(s.trim().parse().ok()?).ok();
++        let (at, rest) = entry.split_once(':')?;
++        let at = seconds(at)?;
++        let (key, held) = match rest.split_once(':') {
++            Some((key, hold)) => (key, seconds(hold)?),
++            None => (rest, Duration::from_millis(200)),
++        };
++        let vk = match key.trim() {
++            "Enter" => 0x0D,
++            "Esc" => 0x1B,
++            "Tab" => 0x09,
++            "Back" => 0x08,
++            "Up" => 0x26,
++            "Down" => 0x28,
++            "Left" => 0x25,
++            "Right" => 0x27,
++            k if k.len() == 1 && k.as_bytes()[0].is_ascii_alphanumeric() => {
++                k.as_bytes()[0].to_ascii_uppercase()
++            }
++            _ => return None,
++        };
++        Some((at..at.checked_add(held)?, vk))
+     }
+ 
+     /// The foreground window is one of ours (the title's or our fallback).
+@@ -1254,6 +1360,43 @@ mod host {
+             (1.0, -1.0, 1.0, 0.0)
+         );
+     }
++
++    #[cfg(feature = "diagnostics")]
++    #[test]
++    fn scheduled_menu_hold_preserves_the_connected_pad() {
++        let script: Vec<_> = "1:Enter:2,1.5:Enter,2:X"
++            .split(',')
++            .map(|s| parse_key(s).unwrap())
++            .collect();
++        let physical = PadState {
++            buttons: Y,
++            left_x: 0.5,
++            ..Default::default()
++        };
++        let mut host = Host::default();
++        for (ms, keys, expected) in [
++            (999, &[][..], Y),
++            (1000, &[0x0d], Y | A),
++            (1501, &[0x0d], Y | A),
++            (2000, &[0x0d, b'X'], Y | A | X),
++            (2200, &[0x0d], Y | A),
++            (2999, &[0x0d], Y | A),
++            (3000, &[], Y),
++        ] {
++            assert_eq!(
++                host.scripted_keys_at(&script, Duration::from_millis(ms), None, Instant::now()),
++                keys
++            );
++            assert_eq!(
++                host.with_scripted_input(0, physical),
++                PadState {
++                    buttons: expected,
++                    ..physical
++                }
++            );
++            assert_eq!(host.with_scripted_input(1, physical), physical);
++        }
++    }
+ }
+ 
+ #[cfg(test)]

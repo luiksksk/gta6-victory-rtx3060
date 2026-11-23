@@ -1,0 +1,12 @@
+# Versionar somente os arquivos destinados a publicacao.
+/*
+!/.gitattributes
+!/.gitignore
+!/README.md
+!/LICENSE
+!/VIctory.ps1
+!/Iniciar-VIctory.cmd
+!/patches/
+/patches/*
+!/patches/execucao-rtx3060.patch
+!/patches/diagnostico-cena.patch

@@ -1,0 +1,2002 @@
+diff --git a/crates/victory-gpu/src/capture.rs b/crates/victory-gpu/src/capture.rs
+index b88689313ad15d74fbc97d9ebc4bb194cf2785b4..3e5ff10ad0be7bcd2464572db8372deb8f5348ee 100644
+--- a/crates/victory-gpu/src/capture.rs
++++ b/crates/victory-gpu/src/capture.rs
+@@ -4,10 +4,13 @@
+ //! size. Only in builds with diagnostics.
+ 
+ use std::path::PathBuf;
++use std::sync::atomic::{AtomicU64, Ordering};
+ 
+ use windows::Win32::Graphics::Direct3D12::*;
+ use windows::Win32::Graphics::Dxgi::Common::*;
+ 
++pub(crate) mod mesh_targets;
++
+ /// The folder frames go to, if capturing.
+ pub(crate) fn folder() -> Option<&'static PathBuf> {
+     static FOLDER: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+@@ -29,9 +32,60 @@ pub(crate) fn listed(n: u64) -> bool {
+     .contains(&n)
+ }
+ 
+-/// Whether frame `n` is saved.
+-pub(crate) fn wanted(n: u64) -> bool {
+-    folder().is_some() && (n.is_power_of_two() || listed(n))
++/// Optional one-shot burst; the original PNG schedule is independent.
++pub(crate) fn mesh_frames() -> u64 {
++    static LENGTH: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
++    *LENGTH.get_or_init(|| {
++        if folder().is_none() { return 0; }
++        std::env::var("VICTORY_CAPTURE_MESH_FRAMES").ok()
++            .and_then(|v| v.trim().parse().ok()).unwrap_or(0)
++    })
++}
++
++static SUBMITTED_MESHES: AtomicU64 = AtomicU64::new(0);
++
++pub(crate) fn mesh_submission(counts: impl Iterator<Item = u32>) {
++    if mesh_frames() != 0 {
++        let count = counts.map(u64::from).sum::<u64>();
++        if count != 0 {
++            SUBMITTED_MESHES.fetch_add(count, Ordering::Relaxed);
++        }
++    }
++}
++
++/// Drain at each guest Present, including those that have no valid source texture.
++pub(crate) fn take_meshes() -> u64 {
++    if mesh_frames() == 0 { 0 } else { SUBMITTED_MESHES.swap(0, Ordering::Relaxed) }
++}
++
++#[derive(Default)]
++struct MeshBurst {
++    start: Option<u64>,
++}
++
++impl MeshBurst {
++    fn wants(&mut self, frame: u64, meshes: u64, length: u64) -> bool {
++        if length != 0 && meshes >= 16 && self.start.is_none() {
++            self.start = Some(frame);
++        }
++        self.start.and_then(|first| frame.checked_sub(first)).is_some_and(|offset| offset < length)
++    }
++}
++
++/// The trigger frame also goes through the normal readback and PNG writer.
++pub(crate) fn wanted(n: u64, meshes: u64) -> bool {
++    let mut burst_frame = false;
++    let length = mesh_frames();
++    if length != 0 {
++        static BURST: std::sync::Mutex<MeshBurst> = std::sync::Mutex::new(MeshBurst { start: None });
++        let mut burst = BURST.lock().unwrap_or_else(|e| e.into_inner());
++        let previous = burst.start;
++        burst_frame = burst.wants(n, meshes, length);
++        if previous != burst.start {
++            tracing::info!(frame = n, meshes, frames = length, "mesh capture burst started");
++        }
++    }
++    folder().is_some() && (burst_frame || n.is_power_of_two() || listed(n))
+ }
+ 
+ /// Saves 8-bit RGBA or BGRA rows (`pitch` bytes apart) as frame `n`.
+@@ -518,6 +572,22 @@ pub(crate) fn recent_levels() -> Vec<u8> {
+ 
+ #[cfg(test)]
+ mod tests {
++    #[test]
++    fn mesh_burst_is_one_shot_and_includes_its_trigger_frame() {
++        let mut burst = super::MeshBurst::default();
++        assert!(!burst.wants(190, 100, 0));
++        assert!(!burst.wants(191, 15, 3));
++        assert!(!burst.wants(192, 15, 3));
++        assert!(burst.wants(193, 16, 3));
++        assert!(burst.wants(194, 0, 3));
++        assert!(burst.wants(195, 42, 3));
++        assert!(!burst.wants(196, 49, 3));
++        assert!(!burst.wants(200, 100, 3));
++        let mut single = super::MeshBurst::default();
++        assert!(single.wants(90, 17, 1));
++        assert!(!single.wants(91, 17, 1));
++    }
++
+     #[test]
+     fn crc_matches_the_png_check_value() {
+         assert_eq!(super::crc32(b"IEND"), 0xae42_6082);
+diff --git a/crates/victory-gpu/src/capture/mesh_targets.rs b/crates/victory-gpu/src/capture/mesh_targets.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ddf0692d8ae5bf440de6b9a9596f623070785997
+--- /dev/null
++++ b/crates/victory-gpu/src/capture/mesh_targets.rs
+@@ -0,0 +1,479 @@
++//! One optional snapshot of writable color views on submitted mesh + pixel
++//! passes. These can contain material data or UI; they do not identify a scene.
++
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::{Arc, Mutex, OnceLock, Weak};
++
++use windows::Win32::Graphics::Direct3D12::*;
++use windows::Win32::Graphics::Dxgi::Common::*;
++use windows::core::Interface;
++
++use crate::host::{Host, HostList, transition};
++
++const MAX_VIEWS: usize = 3;
++const MAX_BYTES: u64 = 32 * 1024 * 1024;
++const MAX_NOTES: usize = 16;
++const THRESHOLD: u64 = 16;
++static DONE: AtomicBool = AtomicBool::new(false);
++
++pub(crate) fn watching() -> bool {
++    static ENABLED: OnceLock<bool> = OnceLock::new();
++    *ENABLED.get_or_init(|| {
++        super::folder().is_some()
++            && std::env::var("VICTORY_DUMP_MESH_TARGETS").as_deref() == Ok("1")
++    }) && !DONE.load(Ordering::Relaxed)
++}
++
++fn pixel_bytes(format: DXGI_FORMAT) -> Option<usize> {
++    match format {
++        DXGI_FORMAT_R16G16B16A16_FLOAT => Some(8),
++        DXGI_FORMAT_R10G10B10A2_UNORM
++        | DXGI_FORMAT_R11G11B10_FLOAT
++        | DXGI_FORMAT_R8G8B8A8_UNORM
++        | DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
++        | DXGI_FORMAT_B8G8R8A8_UNORM
++        | DXGI_FORMAT_B8G8R8A8_UNORM_SRGB => Some(4),
++        _ => None,
++    }
++}
++
++#[derive(Clone)]
++pub(crate) struct View {
++    key: usize,
++    texture: Weak<ID3D12Resource>,
++    guest: u32,
++    format: DXGI_FORMAT,
++    slot: usize,
++}
++
++impl View {
++    pub(crate) fn bound(
++        resource: crate::object::This,
++        texture: &ID3D12Resource,
++        view: Option<&D3D12_RENDER_TARGET_VIEW_DESC>,
++        slot: usize,
++    ) -> Option<Self> {
++        // SAFETY: this resource has just been looked up to bind its RTV.
++        let d = unsafe { texture.GetDesc() };
++        if slot >= 8
++            || d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D
++            || d.DepthOrArraySize != 1
++            || d.MipLevels != 1
++            || d.SampleDesc.Count != 1
++            || d.Flags.0 & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET.0 == 0
++            || d.Flags.0 & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL.0 != 0
++        {
++            return None;
++        }
++        let format = if let Some(v) = view {
++            if v.ViewDimension != D3D12_RTV_DIMENSION_TEXTURE2D {
++                return None;
++            }
++            // SAFETY: ViewDimension selects this union member.
++            let subresource = unsafe { v.Anonymous.Texture2D };
++            if subresource.MipSlice != 0 || subresource.PlaneSlice != 0 {
++                return None;
++            }
++            if v.Format == DXGI_FORMAT_UNKNOWN {
++                d.Format
++            } else {
++                v.Format
++            }
++        } else {
++            d.Format
++        };
++        pixel_bytes(format)?;
++        // A typed view may differ from a typeless texture, only in its own DXGI family.
++        if crate::resource::family(d.Format.0 as u32) != crate::resource::family(format.0 as u32) {
++            return None;
++        }
++        let (guest, texture) = crate::resource::capture_texture(resource, texture);
++        Some(Self {
++            key: resource as usize,
++            texture,
++            guest,
++            format,
++            slot,
++        })
++    }
++}
++
++#[derive(Clone)]
++struct Usage {
++    view: View,
++    dispatches: u32,
++    first_pipeline: String,
++}
++
++#[derive(Default)]
++pub(crate) struct Notes(Vec<Usage>);
++
++impl Notes {
++    pub(crate) fn clear(&mut self) {
++        self.0.clear();
++    }
++
++    pub(crate) fn note(&mut self, views: &[View], slots: u8, pipeline: &str) {
++        for view in views {
++            if slots & (1 << view.slot) != 0 {
++                self.add(view, 1, pipeline);
++            }
++        }
++    }
++
++    fn add(&mut self, view: &View, count: u32, pipeline: &str) {
++        if let Some(entry) = self
++            .0
++            .iter_mut()
++            .find(|e| e.view.texture.ptr_eq(&view.texture))
++        {
++            entry.dispatches = entry.dispatches.saturating_add(count);
++        } else if self.0.len() < MAX_NOTES {
++            self.0.push(Usage {
++                view: view.clone(),
++                dispatches: count,
++                first_pipeline: pipeline.into(),
++            });
++        }
++    }
++}
++
++#[derive(Default)]
++struct Window {
++    frame: u64,
++    meshes: u64,
++    first: Option<u64>,
++}
++
++impl Window {
++    fn advance(&mut self, frame: u64, meshes: u64) -> bool {
++        if self.frame != frame {
++            self.frame = frame;
++            self.meshes = 0;
++        }
++        self.meshes = self.meshes.saturating_add(meshes);
++        if self.meshes >= THRESHOLD {
++            self.first.get_or_insert(frame);
++        }
++        self.first
++            .is_some_and(|first| (first..=first.saturating_add(2)).contains(&frame))
++    }
++}
++
++struct Sample {
++    usage: Usage,
++    native: DXGI_FORMAT,
++    buffer: ID3D12Resource,
++    footprint: D3D12_SUBRESOURCE_FOOTPRINT,
++    bytes: usize,
++}
++
++pub(crate) struct Snapshot {
++    // Native ownership only from recording until the fence. The stored usage
++    // notes have weak handles and never retain a released title resource.
++    gpu: (HostList, Vec<Arc<ID3D12Resource>>),
++    samples: Vec<Sample>,
++    frame: u64,
++}
++
++/// Called under the actual host queue's submission lock, after the guest lists
++/// and their preludes have been put in execution order. Restore every state.
++pub(crate) fn append(
++    host: &Host,
++    runs: &[&HostList],
++    lists: &mut Vec<Option<ID3D12CommandList>>,
++) -> Option<Snapshot> {
++    if !watching() {
++        return None;
++    }
++    static WINDOW: Mutex<Window> = Mutex::new(Window {
++        frame: 0,
++        meshes: 0,
++        first: None,
++    });
++    let frame = crate::queue::presented().saturating_add(1);
++    let meshes = runs
++        .iter()
++        .map(|l| u64::from(l.mesh_dispatches.load(Ordering::Relaxed)))
++        .sum();
++    let mut window = WINDOW.lock().unwrap_or_else(|e| e.into_inner());
++    let previous = window.first;
++    let in_window = window.advance(frame, meshes);
++    if previous != window.first {
++        tracing::info!(frame, meshes = window.meshes, "mesh RTV capture threshold reached");
++    }
++    if !in_window {
++        if let Some(trigger) = window.first
++            && frame > trigger.saturating_add(2)
++        {
++            tracing::info!(
++                trigger,
++                "mesh color capture window closed without an eligible RTV"
++            );
++            DONE.store(true, Ordering::Relaxed);
++        }
++        return None;
++    }
++    let mut notes = Notes::default();
++    for list in runs {
++        for u in &list
++            .mesh_targets
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .0
++        {
++            notes.add(&u.view, u.dispatches, &u.first_pipeline);
++        }
++    }
++    if notes.0.is_empty() {
++        return None;
++    }
++    notes.0.sort_by_key(|u| std::cmp::Reverse(u.dispatches));
++    let commands = host.new_list().ok()?;
++    let mut samples = Vec::new();
++    let mut sources = Vec::new();
++    let mut bytes_left = MAX_BYTES;
++    for usage in notes.0 {
++        let Some(texture) = usage.view.texture.upgrade() else {
++            continue;
++        };
++        let Some(final_state) = runs
++            .iter()
++            .rev()
++            .find_map(|l| l.final_texture_state(usage.view.key))
++        else {
++            continue;
++        };
++        // SAFETY: a retained single-plane, single-subresource texture. Query the
++        // actual allocation used by read_back, including row alignment.
++        let desc = unsafe { texture.GetDesc() };
++        let mut bytes = 0;
++        unsafe {
++            host.device
++                .GetCopyableFootprints(&desc, 0, 1, 0, None, None, None, Some(&mut bytes));
++        }
++        if bytes == 0 || bytes > bytes_left {
++            continue;
++        }
++        let state = D3D12_RESOURCE_STATES(final_state as i32);
++        let copy = D3D12_RESOURCE_STATE_COPY_SOURCE;
++        // SAFETY: this list runs directly after the state recorded by the last
++        // original list using this exact source, in the same ExecuteCommandLists.
++        if state != copy {
++            unsafe {
++                commands
++                    .list
++                    .ResourceBarrier(&[transition(&texture, state, copy)]);
++            }
++        }
++        let read = super::read_back(&host.device, &commands.list, &texture);
++        if state != copy {
++            unsafe {
++                commands
++                    .list
++                    .ResourceBarrier(&[transition(&texture, copy, state)]);
++            }
++        }
++        // If allocation failed the barriers still reference the source. Discard
++        // this entire unsubmitted diagnostic list with all its resources.
++        let (buffer, fp) = read?;
++        bytes_left -= bytes;
++        sources.push(texture);
++        samples.push(Sample {
++            usage,
++            native: desc.Format,
++            buffer,
++            footprint: fp.Footprint,
++            bytes: bytes as usize,
++        });
++        if samples.len() == MAX_VIEWS {
++            break;
++        }
++    }
++    if samples.is_empty() {
++        return None;
++    }
++    // A diagnostic list that does not close is simply never submitted.
++    unsafe {
++        commands.list.Close().ok()?;
++    }
++    lists.push(Some(commands.list.cast().ok()?));
++    DONE.store(true, Ordering::Relaxed);
++    tracing::info!(
++        frame,
++        trigger = window.first,
++        frame_meshes = window.meshes,
++        views = samples.len(),
++        readback_bytes = MAX_BYTES - bytes_left,
++        "capturing mesh-bound color RTVs at end of submission"
++    );
++    Some(Snapshot {
++        gpu: (commands, sources),
++        samples,
++        frame,
++    })
++}
++
++/// A failed queue signal or wake leaves ownership with a bounded pending slot.
++/// Never map or release submitted work before a confirmed fence or device loss.
++pub(crate) fn retire(
++    fence: &ID3D12Fence,
++    serial: u64,
++    snapshot: Option<Snapshot>,
++) -> Option<Snapshot> {
++    static WAITING: AtomicBool = AtomicBool::new(false);
++    static PENDING: Mutex<Option<(u64, Snapshot)>> = Mutex::new(None);
++    if snapshot.is_none() && !WAITING.load(Ordering::Relaxed) {
++        return None;
++    }
++    let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
++    if let Some(capture) = snapshot {
++        *pending = Some((serial, capture));
++    }
++    // SAFETY: a query on the queue's live fence, while its submission lock is held.
++    let completed = unsafe { fence.GetCompletedValue() };
++    if completed == u64::MAX {
++        pending.take();
++        WAITING.store(false, Ordering::Relaxed);
++        return None;
++    }
++    if pending
++        .as_ref()
++        .is_some_and(|(serial, _)| *serial <= completed)
++    {
++        WAITING.store(false, Ordering::Relaxed);
++        return pending.take().map(|(_, capture)| capture);
++    }
++    WAITING.store(true, Ordering::Relaxed);
++    None
++}
++
++impl Snapshot {
++    pub(crate) fn save(self) {
++        let Self { gpu, samples, frame } = self;
++        drop(gpu);
++        for (index, sample) in samples.into_iter().enumerate() {
++            let f = sample.footprint;
++            let (w, h, pitch) = (f.Width as usize, f.Height as usize, f.RowPitch as usize);
++            let view = &sample.usage.view;
++            let Some(bpp) = pixel_bytes(view.format) else {
++                continue;
++            };
++            let row = w * bpp;
++            if h == 0 || w == 0 || row > pitch || (h - 1) * pitch + row > sample.bytes {
++                continue;
++            }
++            let range = D3D12_RANGE {
++                Begin: 0,
++                End: sample.bytes,
++            };
++            let mut data = std::ptr::null_mut();
++            // SAFETY: retire confirmed the fence. Use the actual buffer length,
++            // which need not contain padding after the final useful row.
++            let decoded = unsafe {
++                if sample.buffer.Map(0, Some(&range), Some(&mut data)).is_err() {
++                    continue;
++                }
++                if data.is_null() {
++                    sample.buffer.Unmap(0, Some(&D3D12_RANGE::default()));
++                    continue;
++                }
++                let rows = std::slice::from_raw_parts(data.cast::<u8>(), sample.bytes);
++                let varied = rgb_varies(rows, w, h, pitch, bpp, view.format);
++                let rgba = super::to_rgba(view.format.0 as u32, w, h, pitch, rows);
++                sample.buffer.Unmap(0, Some(&D3D12_RANGE::default()));
++                (varied, rgba)
++            };
++            let (rgb_varies, Some(rgba)) = decoded else {
++                continue;
++            };
++            let first_rgb = &rgba[..3];
++            let (mut preview_nonblack, mut preview_different) = (0usize, 0usize);
++            for pixel in rgba.chunks_exact(4) {
++                preview_nonblack += usize::from(pixel[..3] != [0, 0, 0]);
++                preview_different += usize::from(&pixel[..3] != first_rgb);
++            }
++            let name = format!(
++                "frame-{}-mesh-rtv-{index}-slot{}-{}x{}-guest{}-native{}-view{}",
++                frame, view.slot, w, h, view.guest, sample.native.0, view.format.0
++            );
++            tracing::info!(frame, file = %name, guest_format = view.guest,
++                native_format = sample.native.0, view_format = view.format.0, slot = view.slot,
++                dispatches = sample.usage.dispatches, pipeline = %sample.usage.first_pipeline,
++                rgb_varies, preview_nonblack, preview_different, pixels = w*h,
++                "mesh-bound color RTV; raw RGB-bit variation and normalized preview counts; may contain material data or UI");
++            super::save_as(&name, f.Width, f.Height, w * 4, false, &rgba);
++        }
++    }
++}
++
++fn rgb_varies(
++    rows: &[u8],
++    w: usize,
++    h: usize,
++    pitch: usize,
++    bpp: usize,
++    format: DXGI_FORMAT,
++) -> bool {
++    let rgb = |p: &[u8]| -> u64 {
++        match format {
++            DXGI_FORMAT_R16G16B16A16_FLOAT => {
++                u64::from_le_bytes(p.try_into().unwrap()) & 0x0000_ffff_ffff_ffff
++            }
++            DXGI_FORMAT_R10G10B10A2_UNORM => {
++                u64::from(u32::from_le_bytes(p.try_into().unwrap()) & 0x3fff_ffff)
++            }
++            DXGI_FORMAT_R11G11B10_FLOAT => u64::from(u32::from_le_bytes(p.try_into().unwrap())),
++            _ => u64::from(u32::from_le_bytes(p.try_into().unwrap()) & 0x00ff_ffff),
++        }
++    };
++    let first = rgb(&rows[..bpp]);
++    (0..h).any(|y| {
++        rows[y * pitch..][..w * bpp]
++            .chunks_exact(bpp)
++            .any(|p| rgb(p) != first)
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn trigger_spans_submissions_and_only_two_further_frames() {
++        let mut w = Window::default();
++        assert!(!w.advance(41, 15));
++        assert!(!w.advance(42, 1));
++        assert!(w.advance(42, 15));
++        assert!(w.advance(43, 2));
++        assert!(w.advance(44, 0));
++        assert!(!w.advance(45, 80));
++        assert_eq!(w.first, Some(42));
++    }
++
++    #[test]
++    fn color_variation_ignores_alpha_and_row_padding() {
++        let mut p = [1, 2, 3, 0, 99, 99, 99, 99, 1, 2, 3, 255];
++        assert!(!rgb_varies(&p, 1, 2, 8, 4, DXGI_FORMAT_R8G8B8A8_UNORM));
++        p[9] = 7;
++        assert!(rgb_varies(&p, 1, 2, 8, 4, DXGI_FORMAT_R8G8B8A8_UNORM));
++        assert!(!rgb_varies(
++            &[0, 0, 0, 0, 0, 0, 0, 192],
++            2,
++            1,
++            8,
++            4,
++            DXGI_FORMAT_R10G10B10A2_UNORM
++        ));
++        assert!(!rgb_varies(
++            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255],
++            2,
++            1,
++            16,
++            8,
++            DXGI_FORMAT_R16G16B16A16_FLOAT
++        ));
++        assert_eq!(pixel_bytes(DXGI_FORMAT_R32_FLOAT), None);
++        assert_eq!(pixel_bytes(DXGI_FORMAT_D24_UNORM_S8_UINT), None);
++    }
++}
+diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
+index 3627c7b9294f4ef34c96bcf851a7b8c7093971fc..6bfcee8b9fa1a9bfea1211e4fd74fd84aad4abcd 100644
+--- a/crates/victory-gpu/src/draw.rs
++++ b/crates/victory-gpu/src/draw.rs
+@@ -63,6 +63,8 @@ pub(crate) struct State {
+     index: IndexView,
+     /// Bound render target and depth resources, for their host states.
+     targets: Vec<usize>,
++    #[cfg(feature = "diagnostics")]
++    mesh_color_views: Vec<crate::capture::mesh_targets::View>,
+     depth: usize,
+     /// The title's primitive topology (the host's may differ).
+     topology: u32,
+@@ -244,6 +246,8 @@ impl State {
+             return;
+         };
+         self.targets.clear();
++        #[cfg(feature = "diagnostics")]
++        self.mesh_color_views.clear();
+         let mut rtvs = Vec::new();
+         for &h in handles {
+             let Some(record) = crate::descriptor::rtv_record(h) else {
+@@ -259,7 +263,16 @@ impl State {
+             self.targets.push(record.resource as usize);
+             #[cfg(feature = "diagnostics")]
+             crate::capture::note_target(record.resource);
+-            rtvs.push(host.rtv(texture, record.desc().as_ref()));
++            let desc = record.desc();
++            #[cfg(feature = "diagnostics")]
++            if crate::capture::mesh_targets::watching()
++                && let Some(view) = crate::capture::mesh_targets::View::bound(
++                    record.resource, texture, desc.as_ref(), rtvs.len(),
++                )
++            {
++                self.mesh_color_views.push(view);
++            }
++            rtvs.push(host.rtv(texture, desc.as_ref()));
+         }
+         self.depth = 0;
+         let dsv = crate::descriptor::dsv_record(depth).and_then(|record| {
+@@ -552,6 +565,20 @@ impl State {
+                     list.note_op(|| self.op_text(format!("mesh {x}"), false));
+                     // SAFETY: an open list with everything set.
+                     unsafe { l6.DispatchMesh(x, 1, 1) };
++                    #[cfg(feature = "diagnostics")]
++                    if x != 0 {
++                        let watching = crate::capture::mesh_targets::watching();
++                        if watching || crate::capture::mesh_frames() != 0 {
++                            list.mesh_dispatches.fetch_add(1, Ordering::Relaxed);
++                        }
++                        if watching && !self.mesh_color_views.is_empty()
++                            && let Some(p) = crate::pipeline::host_pipeline(self.pipeline as This)
++                            && p.mesh_color_slots != 0
++                        {
++                            let mut colors = list.mesh_targets.lock().unwrap_or_else(|e| e.into_inner());
++                            colors.note(&self.mesh_color_views, p.mesh_color_slots, &p.name);
++                        }
++                    }
+                     DRAWN.fetch_add(1, Ordering::Relaxed);
+                     true
+                 }
+diff --git a/crates/victory-gpu/src/fence.rs b/crates/victory-gpu/src/fence.rs
+index 285e7bddfa5ef15a43c70e455c80b1c23dc3f3d0..8e4a81035ec017d135905f9c391bc1a9c0b1392e 100644
+--- a/crates/victory-gpu/src/fence.rs
++++ b/crates/victory-gpu/src/fence.rs
+@@ -78,6 +78,13 @@ extern "system" fn release(this: This) -> u32 {
+ extern "system" fn completed(this: This) -> u64 {
+     fence(this).value.load(Ordering::Acquire)
+ }
++#[cfg(feature = "diagnostics")]
++pub(crate) fn diagnostic_completed(this: This) -> Option<u64> {
++    // SAFETY: Queue::Wait takes a live, non-null fence interface. Verify its
++    // table before interpreting it as one of our boxed fences.
++    let table = unsafe { this.cast::<*const *const ()>().read() };
++    (table == FUNCTIONS.0.as_ptr()).then(|| completed(this))
++}
+ extern "system" fn set_event_on_completion(this: This, value: u64, event: *mut c_void) -> HRESULT {
+     let fence = fence(this);
+     let mut waiters = fence.waiters.lock().unwrap_or_else(|e| e.into_inner());
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+index 476ce4da34e23c0a2a16a63366b585595430d79c..f79ae65da3f6773849b17b58fd18c38427eba12c 100644
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -226,6 +226,11 @@ pub(crate) struct HostList {
+     /// data without marker texts).
+     #[cfg(feature = "diagnostics")]
+     notes: Mutex<Vec<String>>,
++    /// Nonempty DispatchMesh commands recorded in this list since its last reset.
++    #[cfg(feature = "diagnostics")]
++    pub(crate) mesh_dispatches: AtomicU32,
++    #[cfg(feature = "diagnostics")]
++    pub(crate) mesh_targets: Mutex<crate::capture::mesh_targets::Notes>,
+ }
+ 
+ /// Whether device-removed data is on (`VICTORY_D3D12_DRED`, diagnostics
+@@ -300,6 +305,25 @@ struct Deferred {
+ }
+ 
+ impl Host {
++    /// Whether the driver reports a compute wave range strictly below 64 lanes.
++    pub(crate) fn narrow_waves(&self) -> bool {
++        static NARROW: OnceLock<bool> = OnceLock::new();
++        *NARROW.get_or_init(|| {
++            let mut options = D3D12_FEATURE_DATA_D3D12_OPTIONS1::default();
++            // SAFETY: the feature query writes the corresponding options structure.
++            let ok = unsafe {
++                self.device
++                    .CheckFeatureSupport(
++                        D3D12_FEATURE_D3D12_OPTIONS1,
++                        (&raw mut options).cast(),
++                        size_of_val(&options) as u32,
++                    )
++                    .is_ok()
++            };
++            ok && options.WaveOps.as_bool() && (1..64).contains(&options.WaveLaneCountMax)
++        })
++    }
++
+     /// Whether the host runs mesh shaders at shader model 6.6 (translated
+     /// mesh shaders need both); logged once.
+     pub(crate) fn mesh_shaders(&self) -> bool {
+@@ -368,6 +392,10 @@ impl Host {
+                 pipelines: Mutex::default(),
+                 #[cfg(feature = "diagnostics")]
+                 notes: Mutex::default(),
++                #[cfg(feature = "diagnostics")]
++                mesh_dispatches: AtomicU32::new(0),
++                #[cfg(feature = "diagnostics")]
++                mesh_targets: Mutex::default(),
+             })
+         }
+     }
+@@ -389,10 +417,14 @@ impl Host {
+         batch.flush();
+         let mut submitted = self.submitted.lock().unwrap_or_else(|e| e.into_inner());
+         *submitted += 1;
++        #[cfg(feature = "diagnostics")]
++        let snapshot = crate::capture::mesh_targets::append(self, runs, &mut lists);
+         let prepared = std::time::Instant::now();
+         // SAFETY: closed lists; the fence and event are ours.
+         unsafe {
+             self.queue.ExecuteCommandLists(&lists);
++            #[cfg(feature = "diagnostics")]
++            crate::capture::mesh_submission(runs.iter().map(|l| l.mesh_dispatches.load(Ordering::Relaxed)));
+             let waited = self
+                 .queue
+                 .Signal(&self.fence, *submitted)
+@@ -438,6 +470,12 @@ impl Host {
+             }
+         }
+         self.log_messages();
++        #[cfg(feature = "diagnostics")]
++        {
++            let ready = crate::capture::mesh_targets::retire(&self.fence, *submitted, snapshot);
++            drop(submitted);
++            if let Some(ready) = ready { ready.save(); }
++        }
+     }
+ 
+     /// With `VICTORY_D3D12_DRED`: the faulting address and the allocations
+@@ -611,6 +649,10 @@ impl HostList {
+         self.pipelines.lock().unwrap_or_else(|e| e.into_inner()).clear();
+         #[cfg(feature = "diagnostics")]
+         self.notes.lock().unwrap_or_else(|e| e.into_inner()).clear();
++        #[cfg(feature = "diagnostics")]
++        self.mesh_dispatches.store(0, Ordering::Relaxed);
++        #[cfg(feature = "diagnostics")]
++        self.mesh_targets.lock().unwrap_or_else(|e| e.into_inner()).clear();
+         {
+             let mut scratch = self.scratch.lock().unwrap_or_else(|e| e.into_inner());
+             (scratch.current, scratch.used) = (0, 0);
+@@ -650,6 +692,11 @@ impl HostList {
+         }
+     }
+ 
++    #[cfg(feature = "diagnostics")]
++    pub(crate) fn final_texture_state(&self, key: usize) -> Option<u32> {
++        self.states.lock().unwrap_or_else(|e| e.into_inner()).get(&key).map(|s| s.1)
++    }
++
+     /// At submission: the list that moves each texture this list uses from
+     /// its real state to the one the list starts with; the textures' real
+     /// states become those the list ends with.
+@@ -1192,7 +1239,7 @@ impl Host {
+     /// Shows `texture`, which is in `state` (a host state) and stays in it,
+     /// as frame `frame` (saved if captures are on). `None` if nothing was
+     /// shown; else, in diagnostics builds, whether the frame was black.
+-    pub(crate) fn present(&self, texture: &ID3D12Resource, state: u32, frame: u64) -> Option<bool> {
++    pub(crate) fn present(&self, texture: &ID3D12Resource, state: u32, frame: u64, frame_meshes: u64) -> Option<bool> {
+         // SAFETY: a live resource.
+         let desc = unsafe { texture.GetDesc() };
+         let Some(format) = swap_format(desc.Format) else {
+@@ -1244,13 +1291,13 @@ impl Host {
+             ]);
+             list.CopyResource(&back, texture);
+             #[cfg(feature = "diagnostics")]
+-            let capture = crate::capture::wanted(frame)
++            let capture = crate::capture::wanted(frame, frame_meshes)
+                 .then(|| crate::capture::read_back(&self.device, list, texture))
+                 .flatten();
+             #[cfg(feature = "diagnostics")]
+             let probe = crate::capture::probe(&self.device, list, texture);
+             #[cfg(not(feature = "diagnostics"))]
+-            let _ = frame;
++            let _ = (frame, frame_meshes);
+             list.ResourceBarrier(&[
+                 transition(texture, D3D12_RESOURCE_STATE_COPY_SOURCE, state),
+                 transition(
+diff --git a/crates/victory-gpu/src/list.rs b/crates/victory-gpu/src/list.rs
+index 6f11cc7a56d93631002b55132aff083ddade2c16..69aa952d7e179a958f36c7b888473b96c84b8910 100644
+--- a/crates/victory-gpu/src/list.rs
++++ b/crates/victory-gpu/src/list.rs
+@@ -1133,7 +1133,15 @@ pub(crate) fn take_counts() -> (u64, u64) {
+ /// A GPU wait for a memory value `(address, comparison, reference, ...)`.
+ /// Lists run one after another and to completion, so a value another queue
+ /// or the CPU has to write first cannot be waited for; nothing to do.
+-extern "system" fn wait_value(_: This, _address: u64, _comparison: u32, _reference: u64) {}
++extern "system" fn wait_value<const BITS: u32>(
++    _list: This,
++    _address: u64,
++    _comparison: u32,
++    _reference: u64,
++) {
++    #[cfg(feature = "diagnostics")]
++    crate::queue::trace::memory_wait(BITS, _list, _address, _comparison, _reference);
++}
+ 
+ /// The enhanced barriers `(group count, groups)`: buffer, texture and
+ /// global barriers with layouts instead of states. Every host use of a
+@@ -1236,8 +1244,8 @@ const METHODS: [(usize, *const ()); 52] = [
+     (68, ignored_state as *const ()),             // 0x220 depth bounds
+     (69, write32 as *const ()),                   // 0x228
+     (70, write64 as *const ()),                   // 0x230
+-    (71, wait_value as *const ()),                // 0x238, 32 bits
+-    (72, wait_value as *const ()),                // 0x240, 64 bits
++    (71, wait_value::<32> as *const ()),          // 0x238, 32 bits
++    (72, wait_value::<64> as *const ()),          // 0x240, 64 bits
+     (73, ignored_state as *const ()),             // 0x248 pixel shader depth order
+     (83, copy_texture_region_x as *const ()),     // 0x298
+     (84, copy_resource_x as *const ()),           // 0x2a0
+diff --git a/crates/victory-gpu/src/pipeline.rs b/crates/victory-gpu/src/pipeline.rs
+index ad450cc1e140519071496c41f21eda0e6689234c..0d123916ec2a49d1f8a13fb21c3b54960c1a2729 100644
+--- a/crates/victory-gpu/src/pipeline.rs
++++ b/crates/victory-gpu/src/pipeline.rs
+@@ -232,7 +232,14 @@ fn hand_out(
+         #[cfg(windows)]
+         host: OnceLock::new(),
+     });
+-    object::hand_out(PIPELINE, pipeline, iid, &PIPELINE_IIDS, out)
++    #[cfg(all(windows, feature = "diagnostics"))]
++    let this = std::ptr::from_ref(&pipeline.object);
++    let result = object::hand_out(PIPELINE, pipeline, iid, &PIPELINE_IIDS, out);
++    #[cfg(all(windows, feature = "diagnostics"))]
++    if result == crate::object::S_OK {
++        prewarm::schedule(this);
++    }
++    result
+ }
+ 
+ /// Device method.
+@@ -398,6 +405,8 @@ static FUNCTIONS: Table<24> = {
+ 
+ #[cfg(windows)]
+ pub(crate) mod host;
++#[cfg(all(windows, feature = "diagnostics"))]
++mod prewarm;
+ 
+ #[cfg(test)]
+ mod tests {
+diff --git a/crates/victory-gpu/src/pipeline/host.rs b/crates/victory-gpu/src/pipeline/host.rs
+index 1179430077365e173edd3f8e7425fd0ea736a0e7..5b28d6f52d3c79f86f2b8df3835dacdba70d3428 100644
+--- a/crates/victory-gpu/src/pipeline/host.rs
++++ b/crates/victory-gpu/src/pipeline/host.rs
+@@ -91,6 +91,28 @@ impl Default for GraphicsState {
+ }
+ 
+ impl GraphicsState {
++    /// Slots for which the mesh PSO actually allows at least one RGB write.
++    #[cfg(feature = "diagnostics")]
++    fn mesh_color_slots(&self) -> u8 {
++        if self.sample_mask == 0 {
++            return 0;
++        }
++        let mut slots = 0;
++        for slot in 0..self.targets.NumRenderTargets.min(8) as usize {
++            let blend = if self.blend.IndependentBlendEnable.as_bool() {
++                slot
++            } else {
++                0
++            };
++            if self.targets.RTFormats[slot] != DXGI_FORMAT_UNKNOWN
++                && self.blend.RenderTarget[blend].RenderTargetWriteMask & 7 != 0
++            {
++                slots |= 1 << slot;
++            }
++        }
++        slots
++    }
++
+     /// Takes in one subobject of a stream: its type, then its data at +4
+     /// (+8 for those holding pointers).
+     ///
+@@ -203,6 +225,20 @@ impl GraphicsState {
+     }
+ }
+ 
++#[cfg(all(test, feature = "diagnostics"))]
++#[test]
++fn mesh_color_slots_require_rgb_writes() {
++    let mut state = GraphicsState::default();
++    state.targets.NumRenderTargets = 2;
++    state.targets.RTFormats[..2].fill(DXGI_FORMAT_R8G8B8A8_UNORM);
++    state.blend.RenderTarget[0].RenderTargetWriteMask = 8; // alpha only
++    assert_eq!(state.mesh_color_slots(), 0);
++    state.blend.IndependentBlendEnable = true.into();
++    assert_eq!(state.mesh_color_slots(), 2);
++    state.sample_mask = 0;
++    assert_eq!(state.mesh_color_slots(), 0);
++}
++
+ /// One input element: vertex buffer slot, byte offset, format.
+ #[derive(Debug, Clone, Copy)]
+ pub(crate) struct Input {
+@@ -239,6 +275,9 @@ pub(crate) struct HostPipeline {
+     pub(crate) compute: bool,
+     /// A mesh pipeline (graphics without vertex input).
+     pub(crate) mesh: bool,
++    /// Mesh PSO with a bound pixel shader, indexed by writable RTV slot.
++    #[cfg(feature = "diagnostics")]
++    pub(crate) mesh_color_slots: u8,
+     pub(crate) pso: ID3D12PipelineState,
+     pub(crate) root: ID3D12RootSignature,
+     /// Vertex, then pixel stage, or the compute stage.
+@@ -414,6 +453,8 @@ impl HostPipeline {
+             return Some(HostPipeline {
+                 compute: true,
+                 mesh: false,
++                #[cfg(feature = "diagnostics")]
++                mesh_color_slots: 0,
+                 pso,
+                 root,
+                 stages: bound,
+@@ -439,6 +480,8 @@ impl HostPipeline {
+             return Some(HostPipeline {
+                 compute: false,
+                 mesh: true,
++                #[cfg(feature = "diagnostics")]
++                mesh_color_slots: if stages.len() == 2 { g.mesh_color_slots() } else { 0 },
+                 pso,
+                 root,
+                 stages: bound,
+@@ -497,6 +540,8 @@ impl HostPipeline {
+         Some(HostPipeline {
+             compute: false,
+             mesh: false,
++            #[cfg(feature = "diagnostics")]
++            mesh_color_slots: 0,
+             pso,
+             root,
+             stages: bound,
+diff --git a/crates/victory-gpu/src/pipeline/prewarm.rs b/crates/victory-gpu/src/pipeline/prewarm.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..602c26e12ded234fe310c63f04bebfcb19f26cca
+--- /dev/null
++++ b/crates/victory-gpu/src/pipeline/prewarm.rs
+@@ -0,0 +1,161 @@
++//! Prepare title-created pipelines whose shader stages were bound in a previous run.
++
++use std::collections::{HashMap, HashSet};
++use std::sync::atomic::{AtomicUsize, Ordering};
++use std::sync::{Arc, Mutex, OnceLock, mpsc};
++
++use crate::object::{self, This};
++
++struct Prewarm {
++    stages: HashSet<Vec<u64>>,
++    jobs: mpsc::Sender<Job>,
++}
++
++/// A strong interface reference until the worker finishes with this pipeline.
++struct Job(This);
++
++// SAFETY: The object, shader containers and owned graphics description are immutable
++// once handed out. host_pipeline initializes the D3D12 objects through a OnceLock.
++unsafe impl Send for Job {}
++
++impl Drop for Job {
++    fn drop(&mut self) {
++        super::release(self.0);
++    }
++}
++
++static SCHEDULED: AtomicUsize = AtomicUsize::new(0);
++static FINISHED: AtomicUsize = AtomicUsize::new(0);
++static READY_BEFORE_BIND: AtomicUsize = AtomicUsize::new(0);
++
++pub(super) fn schedule(this: This) {
++    static PREWARM: OnceLock<Option<Prewarm>> = OnceLock::new();
++    let Some(prewarm) = PREWARM.get_or_init(start) else {
++        return;
++    };
++    let pipeline = super::pipeline(this);
++    let mut stages: Vec<u64> = pipeline
++        .shaders
++        .iter()
++        .filter_map(|s| hash(&s.hash))
++        .collect();
++    stages.sort_unstable();
++    if stages.is_empty() || !prewarm.stages.contains(&stages) {
++        return;
++    }
++    object::add_ref(this);
++    SCHEDULED.fetch_add(1, Ordering::Relaxed);
++    if prewarm.jobs.send(Job(this)).is_err() {
++        SCHEDULED.fetch_sub(1, Ordering::Relaxed);
++    }
++}
++
++fn hash(text: &str) -> Option<u64> {
++    (text.len() == 16)
++        .then(|| u64::from_str_radix(text, 16).ok())
++        .flatten()
++}
++
++/// A pipeline address can be reused by the title. Keep each frame's bindings separate.
++fn observed(log: &str) -> HashSet<Vec<u64>> {
++    let mut objects: HashMap<(&str, &str), Vec<u64>> = HashMap::new();
++    for line in log.lines() {
++        let Some((_, fields)) = line.split_once(": first bind ") else {
++            continue;
++        };
++        let field = |prefix: &str| {
++            fields
++                .split_ascii_whitespace()
++                .find_map(|s| s.strip_prefix(prefix))
++        };
++        if let (Some(pipeline), Some(frame), Some(shader)) = (
++            field("pipeline="),
++            field("frame="),
++            field("hash=").and_then(hash),
++        ) {
++            objects.entry((pipeline, frame)).or_default().push(shader);
++        }
++    }
++    objects
++        .into_values()
++        .map(|mut stages| {
++            stages.sort_unstable();
++            stages
++        })
++        .collect()
++}
++
++fn start() -> Option<Prewarm> {
++    let path = std::env::var_os("VICTORY_PREWARM_LOG")?;
++    let log = match std::fs::read_to_string(&path) {
++        Ok(log) => log,
++        Err(error) => {
++            tracing::warn!(?path, %error, "could not read pipeline prewarm log");
++            return None;
++        }
++    };
++    let stages = observed(&log);
++    if stages.is_empty() {
++        tracing::warn!(?path, "pipeline prewarm log contains no first bindings");
++        return None;
++    }
++    let (jobs, receiver) = mpsc::channel::<Job>();
++    let receiver = Arc::new(Mutex::new(receiver));
++    let mut workers = 0;
++    for i in 0..2 {
++        let receiver = Arc::clone(&receiver);
++        let start = std::thread::Builder::new()
++            .name(format!("victory-pso-{i}"))
++            .spawn(move || {
++                loop {
++                    let job = receiver.lock().unwrap_or_else(|e| e.into_inner()).recv();
++                    let Ok(job) = job else { break };
++                    let ready = super::host_pipeline(job.0).is_some();
++                    if ready && !super::pipeline(job.0).bound.load(Ordering::Acquire) {
++                        READY_BEFORE_BIND.fetch_add(1, Ordering::Relaxed);
++                    }
++                    let finished = FINISHED.fetch_add(1, Ordering::Relaxed) + 1;
++                    if finished == 1 || finished.is_multiple_of(128) {
++                        tracing::info!(
++                            finished,
++                            scheduled = SCHEDULED.load(Ordering::Relaxed),
++                            ready_before_bind = READY_BEFORE_BIND.load(Ordering::Relaxed),
++                            "pipeline prewarm"
++                        );
++                    }
++                }
++            });
++        match start {
++            Ok(_) => workers += 1,
++            Err(error) => tracing::warn!(%error, "could not start a pipeline prewarm worker"),
++        }
++    }
++    if workers == 0 {
++        return None;
++    }
++    tracing::info!(
++        ?path,
++        sets = stages.len(),
++        workers,
++        "selected pipeline prewarm enabled"
++    );
++    Some(Prewarm { stages, jobs })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::observed;
++
++    #[test]
++    fn selects_complete_stage_sets_and_handles_reused_addresses() {
++        let log = "time INFO gpu: first bind pipeline=0x1 frame=7271 stage=vertex size=64 hash=0000000000000002\n\
++                   time INFO gpu: first bind pipeline=0x2 frame=7271 stage=compute size=64 hash=0000000000000007\n\
++                   time INFO gpu: first bind pipeline=0x1 frame=7271 stage=pixel size=64 hash=0000000000000001\n\
++                   time INFO gpu: first bind pipeline=0x1 frame=7272 stage=compute size=64 hash=0000000000000003\n\
++                   time INFO gpu: shader translated stage=pixel hash=0000000000000004\n\
++                   time INFO gpu: first bind pipeline=0x3 frame=7272 stage=compute hash=invalid";
++        let sets = observed(log);
++        assert_eq!(sets.len(), 3);
++        assert!(sets.contains(&vec![1, 2]) && sets.contains(&vec![3]) && sets.contains(&vec![7]));
++    }
++}
+diff --git a/crates/victory-gpu/src/queue.rs b/crates/victory-gpu/src/queue.rs
+index 5992fad25a11d39af6da78897de8b7ce676a73cc..2b531846ea7103bde3093837c21f05f1948a96d4 100644
+--- a/crates/victory-gpu/src/queue.rs
++++ b/crates/victory-gpu/src/queue.rs
+@@ -7,6 +7,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+ use crate::object::{self, E_INVALIDARG, HRESULT, Iid, Object, QUEUE, S_OK, Table, This, guid};
+ use crate::resource::PAGEABLE_IIDS;
+ 
++#[cfg(feature = "diagnostics")]
++pub(crate) mod trace;
++
+ const QUEUE_IIDS: [Iid; 4] = [
+     guid(
+         0x0ec870a6,
+@@ -111,10 +114,12 @@ extern "system" fn release(this: This) -> u32 {
+ }
+ 
+ /// Runs the lists' host lists and waits for them (decision 0007).
+-extern "system" fn execute(_: This, count: u32, lists: *const This) {
++extern "system" fn execute(_this: This, count: u32, lists: *const This) {
+     if lists.is_null() {
+         return;
+     }
++    #[cfg(feature = "diagnostics")]
++    trace::submitted(_this, count);
+     #[cfg(windows)]
+     if let Some(host) = crate::host::host() {
+         // SAFETY: the title passes `count` lists.
+@@ -164,8 +169,13 @@ extern "system" fn signal(_: This, fence: This, value: u64) -> HRESULT {
+     crate::fence::signal(fence, value)
+ }
+ /// Nothing runs on the queue, so waiting for a fence never blocks it.
+-extern "system" fn wait(_: This, fence: This, _value: u64) -> HRESULT {
+-    if fence.is_null() { E_INVALIDARG } else { S_OK }
++extern "system" fn wait(_this: This, fence: This, _value: u64) -> HRESULT {
++    if fence.is_null() {
++        return E_INVALIDARG;
++    }
++    #[cfg(feature = "diagnostics")]
++    trace::wait(_this, fence, _value);
++    S_OK
+ }
+ /// Ticks per second of GPU timestamps (see [`Written::GpuTimestamp`]).
+ extern "system" fn timestamp_frequency(_: This, out: *mut u64) -> HRESULT {
+@@ -243,6 +253,12 @@ extern "system" fn present(
+     _parameters: *const u8,
+ ) -> HRESULT {
+     let frame = FRAMES.fetch_add(1, Ordering::Relaxed) + 1;
++    #[cfg(all(windows, feature = "diagnostics"))]
++    let frame_meshes = crate::capture::take_meshes();
++    #[cfg(all(windows, not(feature = "diagnostics")))]
++    let frame_meshes = 0;
++    #[cfg(feature = "diagnostics")]
++    trace::report(frame);
+     if frame.is_power_of_two() {
+         let (draws, dispatches) = crate::list::take_counts();
+         #[cfg(windows)]
+@@ -289,7 +305,7 @@ extern "system" fn present(
+         const COPY_SOURCE: u32 = 0x800;
+         let state = crate::resource::host_transition(resource, COPY_SOURCE)
+             .map_or(COPY_SOURCE, |(_, before)| before);
+-        let shown = host.present(texture, state, frame);
++        let shown = host.present(texture, state, frame, frame_meshes);
+         crate::resource::host_transition(resource, state);
+         #[cfg(feature = "diagnostics")]
+         blinks(frame, resource, state, shown);
+@@ -499,11 +515,16 @@ mod tests {
+             S_OK
+         );
+         let signal = slot::<extern "system" fn(This, This, u64) -> HRESULT>(q, signal_slot(q));
++        let wait = slot::<extern "system" fn(This, This, u64) -> HRESULT>(q, signal_slot(q) + 8);
++        let completed = slot::<extern "system" fn(This) -> u64>(fence, 0x40);
++        assert_eq!(wait(q, null, 7), E_INVALIDARG);
++        assert_eq!(wait(q, fence, 7), S_OK);
++        assert_eq!(completed(fence), 0);
+         assert_eq!(signal(q, fence, 7), S_OK);
+-        assert_eq!(
+-            slot::<extern "system" fn(This) -> u64>(fence, 0x40)(fence),
+-            7
+-        );
++        assert_eq!(wait(q, fence, 7), S_OK);
++        assert_eq!(completed(fence), 7);
++        #[cfg(feature = "diagnostics")]
++        assert_eq!(crate::fence::diagnostic_completed(q), None);
+         assert_eq!(slot::<extern "system" fn(This) -> u32>(q, 0x10)(q), 0);
+     }
+ 
+diff --git a/crates/victory-gpu/src/queue/trace.rs b/crates/victory-gpu/src/queue/trace.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..7b802efce5f60ad0f68612fca24dc772b5c4e16b
+--- /dev/null
++++ b/crates/victory-gpu/src/queue/trace.rs
+@@ -0,0 +1,95 @@
++//! Opt-in observation of guest queue use and waits.
++use std::sync::OnceLock;
++use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
++
++use crate::object::This;
++
++static LISTS: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
++static WAITS: AtomicU64 = AtomicU64::new(0);
++static PENDING: AtomicU64 = AtomicU64::new(0);
++static UNKNOWN: AtomicU64 = AtomicU64::new(0);
++static MEMORY_WAITS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
++
++fn interval() -> u64 {
++    static INTERVAL: OnceLock<u64> = OnceLock::new();
++    *INTERVAL.get_or_init(|| {
++        std::env::var("VICTORY_QUEUE_TRACE")
++            .ok()
++            .and_then(|s| s.parse().ok())
++            .unwrap_or(0)
++    })
++}
++
++pub(super) fn submitted(queue: This, count: u32) {
++    if interval() != 0 {
++        let index = match super::queue(queue).kind {
++            0 => 0,
++            2 => 1,
++            _ => 2,
++        };
++        LISTS[index].fetch_add(u64::from(count), Relaxed);
++    }
++}
++
++pub(super) fn wait(queue: This, fence: This, wanted: u64) {
++    if interval() == 0 {
++        return;
++    }
++    WAITS.fetch_add(1, Relaxed);
++    let Some(completed) = crate::fence::diagnostic_completed(fence) else {
++        UNKNOWN.fetch_add(1, Relaxed);
++        return;
++    };
++    if completed < wanted && PENDING.fetch_add(1, Relaxed) == 0 {
++        tracing::info!(
++            frame = super::presented(),
++            ?queue,
++            kind = super::queue(queue).kind,
++            ?fence,
++            wanted,
++            completed,
++            "first queue wait below requested fence value"
++        );
++    }
++}
++
++pub(crate) fn memory_wait(bits: u32, list: This, address: u64, comparison: u32, reference: u64) {
++    if interval() == 0 {
++        return;
++    }
++    let counter = &MEMORY_WAITS[usize::from(bits == 64)];
++    if counter.fetch_add(1, Relaxed) == 0 {
++        let reference = if bits == 32 {
++            reference & u64::from(u32::MAX)
++        } else {
++            reference
++        };
++        tracing::info!(
++            frame = super::presented(),
++            ?list,
++            bits,
++            address = format_args!("{address:#x}"),
++            comparison,
++            reference,
++            "first recorded command list memory wait"
++        );
++    }
++}
++
++pub(super) fn report(frame: u64) {
++    let every = interval();
++    if every != 0 && (frame == 1 || frame.is_multiple_of(every)) {
++        tracing::info!(
++            frame,
++            direct_lists = LISTS[0].load(Relaxed),
++            compute_lists = LISTS[1].load(Relaxed),
++            other_lists = LISTS[2].load(Relaxed),
++            fence_waits = WAITS.load(Relaxed),
++            below_requested = PENDING.load(Relaxed),
++            unknown_fences = UNKNOWN.load(Relaxed),
++            memory_waits32 = MEMORY_WAITS[0].load(Relaxed),
++            memory_waits64 = MEMORY_WAITS[1].load(Relaxed),
++            "guest queue totals"
++        );
++    }
++}
+diff --git a/crates/victory-gpu/src/resource.rs b/crates/victory-gpu/src/resource.rs
+index 828113ee01bc9c8d5ac6b29bf383ae21c919b3ce..2853a5da8fa24b27a784624efff2a203e966de30 100644
+--- a/crates/victory-gpu/src/resource.rs
++++ b/crates/victory-gpu/src/resource.rs
+@@ -749,6 +749,8 @@ struct Resource {
+     /// yet.
+     #[cfg(windows)]
+     host: Option<windows::Win32::Graphics::Direct3D12::ID3D12Resource>,
++    #[cfg(all(windows, feature = "diagnostics"))]
++    capture_texture: std::sync::OnceLock<std::sync::Arc<windows::Win32::Graphics::Direct3D12::ID3D12Resource>>,
+     /// The state the host texture is in. The title's barriers name console
+     /// states (looser than the host's), so we transition from this one.
+     #[cfg(windows)]
+@@ -788,6 +790,18 @@ pub(crate) fn host_resource<'a>(
+     resource(this).host.as_ref()
+ }
+ 
++/// Called while recording a live RTV. Its weak handle expires with the title
++/// resource. Diagnostic submission never dereferences a saved title address.
++#[cfg(all(windows, feature = "diagnostics"))]
++pub(crate) fn capture_texture(
++    this: This,
++    texture: &windows::Win32::Graphics::Direct3D12::ID3D12Resource,
++) -> (u32, std::sync::Weak<windows::Win32::Graphics::Direct3D12::ID3D12Resource>) {
++    let r = resource(this);
++    let owned = r.capture_texture.get_or_init(|| std::sync::Arc::new(texture.clone()));
++    (r.desc.format, std::sync::Arc::downgrade(owned))
++}
++
+ /// A host texture like the title's: same description, in GPU memory,
+ /// without the console's layout and flags.
+ #[cfg(windows)]
+@@ -935,6 +949,8 @@ fn hand_out_resource(
+             .into(),
+         #[cfg(windows)]
+         host,
++        #[cfg(all(windows, feature = "diagnostics"))]
++        capture_texture: Default::default(),
+     });
+     #[cfg(windows)]
+     if desc.dimension == BUFFER {
+diff --git a/crates/victory-gpu/src/shader_cache.rs b/crates/victory-gpu/src/shader_cache.rs
+index b52d7f097e42afd6d3eb98af242e8813aa1388f4..c36cfe22501a8131ad6b318a9233a1cd14a54e83 100644
+--- a/crates/victory-gpu/src/shader_cache.rs
++++ b/crates/victory-gpu/src/shader_cache.rs
+@@ -1,6 +1,7 @@
+ //! Translated shaders kept on disk (decision 0003): under the configured
+ //! cache folder, keyed by the container's content and by the VIctory build
+-//! that translated it (the BLAKE3 of our executable), so a rebuilt
++//! that translated it (the BLAKE3 of our executable). Narrow-wave adapters
++//! use a distinct key for the group-memory translation, so a rebuilt
+ //! translator never serves an old translation. Entries go through
+ //! `victory-pipeline`'s content-addressed cache, which writes them
+ //! atomically; an entry that does not read back is translated again.
+@@ -58,8 +59,18 @@ fn build() -> &'static [u8; 32] {
+ /// The translation of a console shader container, from the cache when
+ /// there is one.
+ pub(crate) fn host_shader(container: &[u8]) -> Result<HostShader, String> {
+-    let translate = |c: &[u8]| victory_shader::emit::translate(c).map_err(|e| e.to_string());
++    let narrow = crate::host::host().is_some_and(|h| h.narrow_waves());
++    let translate = |c: &[u8]| {
++        victory_shader::emit::translate_for_host(c, narrow).map_err(|e| e.to_string())
++    };
+     match CACHE.get() {
++        Some(cache) if narrow => {
++            static NARROW: OnceLock<[u8; 32]> = OnceLock::new();
++            let key = NARROW.get_or_init(|| {
++                *blake3::keyed_hash(build(), b"compute wave range below 64").as_bytes()
++            });
++            cached(cache, key, container, translate)
++        }
+         Some(cache) => cached(cache, build(), container, translate),
+         None => translate(container),
+     }
+diff --git a/crates/victory-hle/src/modules/gameinput.rs b/crates/victory-hle/src/modules/gameinput.rs
+index 8b5f43d6dbfa5bc56c2cbc10079d927cce64f1c9..f3b5791ddd621b74623226d085a8c76f4deb3b07 100644
+--- a/crates/victory-hle/src/modules/gameinput.rs
++++ b/crates/victory-hle/src/modules/gameinput.rs
+@@ -1204,20 +1204,32 @@ mod host {
+                 )
+             });
+             static LIVE_PATH: LazyLock<Option<std::path::PathBuf>> = LazyLock::new(|| {
+-                std::env::var_os("VICTORY_LIVE_KEYS").filter(|p| !p.is_empty()).map(Into::into)
++                std::env::var_os("VICTORY_LIVE_KEYS")
++                    .filter(|p| !p.is_empty())
++                    .map(Into::into)
+             });
+             let (start, keys) = &*SCRIPT;
+             let now = Instant::now();
+             self.scripted_keys_at(keys, now.duration_since(*start), LIVE_PATH.as_deref(), now)
+         }
+ 
+-        fn scripted_keys_at(&mut self, keys: &[ScheduledKey], elapsed: Duration, path: Option<&std::path::Path>, now: Instant) -> Vec<u8> {
++        fn scripted_keys_at(
++            &mut self,
++            keys: &[ScheduledKey],
++            elapsed: Duration,
++            path: Option<&std::path::Path>,
++            now: Instant,
++        ) -> Vec<u8> {
+             self.scripted_keys.clear();
+             append_held(keys, elapsed, &mut self.scripted_keys);
+             if let Some(path) = path {
+                 self.live.refresh(path, now);
+                 if let Some(rev) = &self.live.revision {
+-                    append_held(&rev.keys, now.duration_since(rev.start), &mut self.scripted_keys);
++                    append_held(
++                        &rev.keys,
++                        now.duration_since(rev.start),
++                        &mut self.scripted_keys,
++                    );
+                 }
+             }
+             self.scripted_keys.clone()
+@@ -1228,15 +1240,18 @@ mod host {
+             if slot != 0 || down.is_empty() {
+                 return pad;
+             }
+-            pad.buttons |= FALLBACK_BUTTONS.iter().filter(|(vk, _)| down.contains(vk))
++            pad.buttons |= FALLBACK_BUTTONS
++                .iter()
++                .filter(|(vk, _)| down.contains(vk))
+                 .fold(0, |bits, (_, button)| bits | button);
+-            let axis = |negative: u8, positive: u8, physical: f32| {
+-                match (down.contains(&negative), down.contains(&positive)) {
+-                    (false, false) => physical,
+-                    (true, false) => -1.0,
+-                    (false, true) => 1.0,
+-                    (true, true) => 0.0,
+-                }
++            let axis = |negative: u8, positive: u8, physical: f32| match (
++                down.contains(&negative),
++                down.contains(&positive),
++            ) {
++                (false, false) => physical,
++                (true, false) => -1.0,
++                (false, true) => 1.0,
++                (true, true) => 0.0,
+             };
+             pad.left_x = axis(b'A', b'D', pad.left_x);
+             pad.left_y = axis(b'S', b'W', pad.left_y);
+@@ -1281,12 +1296,24 @@ mod host {
+             let modified = file.metadata().ok().and_then(|meta| meta.modified().ok());
+             let mut contents = String::new();
+             if file.read_to_string(&mut contents).is_err()
+-                || self.revision.as_ref().is_some_and(|rev| rev.modified == modified && rev.contents == contents)
++                || self
++                    .revision
++                    .as_ref()
++                    .is_some_and(|rev| rev.modified == modified && rev.contents == contents)
+             {
+                 return;
+             }
+-            let keys = contents.trim_start_matches('\u{feff}').split(',').filter_map(parse_key).collect();
+-            self.revision = Some(KeyRevision { modified, contents, start: now, keys });
++            let keys = contents
++                .trim_start_matches('\u{feff}')
++                .split(',')
++                .filter_map(parse_key)
++                .collect();
++            self.revision = Some(KeyRevision {
++                modified,
++                contents,
++                start: now,
++                keys,
++            });
+         }
+     }
+ 
+@@ -1396,6 +1423,134 @@ mod host {
+             );
+             assert_eq!(host.with_scripted_input(1, physical), physical);
+         }
++        assert!(host.live.next_read.is_none());
++    }
++
++    #[cfg(feature = "diagnostics")]
++    #[test]
++    fn live_revisions_restart_the_clock_and_stop_after_release() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("controls.txt");
++        let fixed = [parse_key("0:Y:5").unwrap()];
++        let start = Instant::now();
++        let mut host = Host::default();
++        let mut sample = |ms| {
++            let elapsed = Duration::from_millis(ms);
++            host.scripted_keys_at(&fixed, elapsed, Some(&path), start + elapsed)
++        };
++        assert_eq!(sample(0), [b'Y']);
++        std::fs::write(&path, "\u{feff}0:Down:0.4,1:Enter:0.4,0:Y:2\r\n").unwrap();
++        assert_eq!(sample(99), [b'Y']);
++        assert_eq!(sample(100), [b'Y', 0x28]);
++        assert_eq!(sample(499), [b'Y', 0x28]);
++        assert_eq!(sample(500), [b'Y']);
++        assert_eq!(sample(1100), [b'Y', 0x0D]);
++
++        std::fs::write(&path, "0:L:0.2").unwrap();
++        assert_eq!(sample(1199), [b'Y', 0x0D]);
++        assert_eq!(sample(1200), [b'Y', b'L']);
++        assert_eq!(sample(1400), [b'Y']);
++        // A fresh revision with identical bytes also restarts its sequence.
++        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
++        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
++        file.set_modified(before + Duration::from_secs(5)).unwrap();
++        drop(file);
++        assert_eq!(sample(1500), [b'Y', b'L']);
++        std::fs::write(&path, "").unwrap();
++        assert_eq!(sample(1600), [b'Y']);
++        std::fs::write(&path, "0:Enter:15").unwrap();
++        assert_eq!(sample(1700), [b'Y', 0x0D]);
++        std::fs::remove_file(&path).unwrap();
++        assert_eq!(sample(1800), [b'Y']);
++    }
++
++    #[cfg(feature = "diagnostics")]
++    #[test]
++    fn scheduled_sticks_preserve_unaddressed_physical_axes() {
++        let physical = PadState {
++            buttons: B,
++            left_trigger: 0.25,
++            right_trigger: 0.75,
++            left_x: 0.1,
++            left_y: -0.2,
++            right_x: 0.3,
++            right_y: -0.4,
++        };
++        let mut host = Host::default();
++        for (command, expected) in [
++            (
++                "0:A",
++                PadState {
++                    left_x: -1.0,
++                    ..physical
++                },
++            ),
++            (
++                "0:D",
++                PadState {
++                    left_x: 1.0,
++                    ..physical
++                },
++            ),
++            (
++                "0:S",
++                PadState {
++                    left_y: -1.0,
++                    ..physical
++                },
++            ),
++            (
++                "0:W",
++                PadState {
++                    left_y: 1.0,
++                    ..physical
++                },
++            ),
++            (
++                "0:J",
++                PadState {
++                    right_x: -1.0,
++                    ..physical
++                },
++            ),
++            (
++                "0:L",
++                PadState {
++                    right_x: 1.0,
++                    ..physical
++                },
++            ),
++            (
++                "0:K",
++                PadState {
++                    right_y: -1.0,
++                    ..physical
++                },
++            ),
++            (
++                "0:I",
++                PadState {
++                    right_y: 1.0,
++                    ..physical
++                },
++            ),
++            (
++                "0:A,0:D,0:L,0:Enter",
++                PadState {
++                    buttons: B | A,
++                    left_x: 0.0,
++                    right_x: 1.0,
++                    ..physical
++                },
++            ),
++        ] {
++            let keys: Vec<_> = command.split(',').map(|s| parse_key(s).unwrap()).collect();
++            host.scripted_keys_at(&keys, Duration::ZERO, None, Instant::now());
++            assert_eq!(host.with_scripted_input(0, physical), expected);
++            assert_eq!(host.with_scripted_input(1, physical), physical);
++            host.scripted_keys_at(&keys, Duration::from_millis(200), None, Instant::now());
++            assert_eq!(host.with_scripted_input(0, physical), physical);
++        }
+     }
+ }
+ 
+diff --git a/crates/victory-shader/src/emit/bitcode.rs b/crates/victory-shader/src/emit/bitcode.rs
+index 8b555adb99a5ccaeee6362349ae120954dcfae9f..1bf5ed73aa598b8984b149d14f9e1f62bd5f6071 100644
+--- a/crates/victory-shader/src/emit/bitcode.rs
++++ b/crates/victory-shader/src/emit/bitcode.rs
+@@ -7,6 +7,8 @@
+ 
+ use std::collections::HashMap;
+ 
++mod wave_reads;
++
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+ pub(crate) struct Ty(u32);
+ 
+diff --git a/crates/victory-shader/src/emit/bitcode/wave_reads.rs b/crates/victory-shader/src/emit/bitcode/wave_reads.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..19c88c3a55cf6b6fc9ac94590232d4c72b9118a1
+--- /dev/null
++++ b/crates/victory-shader/src/emit/bitcode/wave_reads.rs
+@@ -0,0 +1,264 @@
++use super::{Attr, Bin, Module, Op, Term};
++
++impl Module {
++    /// A lone console wave fills the whole group. Only straight-line programs with these
++    /// lane operations can use a group barrier at every read. Other waves keep their
++    /// native requirements. An index into the group is independent of hardware lane order.
++    pub(crate) fn split_wave_reads(&mut self, entry: usize) -> bool {
++        let mut reads = false;
++        for (b, block) in self.blocks.iter().enumerate() {
++            match block.term {
++                Some(Term::Ret) => {}
++                Some(Term::Br(next)) if next > b => {}
++                _ => return false,
++            }
++            for &i in &block.body {
++                if let Op::Call(f, _) = &self.insts[i as usize].op {
++                    let name = self.funcs[*f as usize].name.as_str();
++                    match name {
++                        "dx.op.waveReadLaneAt.i32" => reads = true,
++                        "dx.op.waveReadLaneFirst.i32"
++                        | "dx.op.waveGetLaneIndex"
++                        | "dx.op.groupId.i32"
++                        | "dx.op.flattenedThreadIdInGroup.i32"
++                        | "dx.op.threadIdInGroup.i32"
++                        | "dx.op.createHandleFromHeap"
++                        | "dx.op.annotateHandle"
++                        | "dx.op.getDimensions"
++                        | "dx.op.textureStore.f32"
++                        | "dx.op.tertiary.f32"
++                        | "dx.op.createHandleFromBinding"
++                        | "dx.op.cbufferLoadLegacy.i32"
++                        | "dx.op.sampleLevel.f32" => {}
++                        _ => return false,
++                    }
++                }
++            }
++        }
++        if !reads {
++            return false;
++        }
++
++        let i32t = self.int(32);
++        let void = self.void();
++        let flat_ty = self.func_ty(i32t, vec![i32t]);
++        self.ptr(flat_ty);
++        let flat_fn = self.function(
++            "dx.op.flattenedThreadIdInGroup.i32",
++            flat_ty,
++            Some(Attr::ReadNone),
++            false,
++        );
++        let barrier_ty = self.func_ty(void, vec![i32t, i32t]);
++        self.ptr(barrier_ty);
++        let barrier = self.function("dx.op.barrier", barrier_ty, Some(Attr::NoDuplicate), false);
++        let array = self.array(64, i32t);
++        let shared = self.global("wave64_exchange", array, 3);
++        let old: Vec<_> = self
++            .blocks
++            .iter_mut()
++            .map(|b| std::mem::take(&mut b.body))
++            .collect();
++        let flat_op = self.i32(96);
++        let flat = self.call(entry, flat_fn, vec![flat_op]);
++        let own = self.element(entry, shared, flat);
++        let sync_op = self.i32(80);
++        let group_shared_sync = self.i32(1 | 8);
++        let mask = self.i32(63);
++        let zero = self.i32(0);
++        for (b, body) in old.into_iter().enumerate() {
++            for i in body {
++                let Op::Call(f, args) = &self.insts[i as usize].op else {
++                    self.blocks[b].body.push(i);
++                    continue;
++                };
++                let (value, source) = match self.funcs[*f as usize].name.as_str() {
++                    "dx.op.waveGetLaneIndex" => {
++                        self.insts[i as usize].op = Op::Bin(Bin::Add, flat, zero);
++                        self.blocks[b].body.push(i);
++                        continue;
++                    }
++                    "dx.op.waveReadLaneAt.i32" => (args[1], args[2]),
++                    "dx.op.waveReadLaneFirst.i32" => (args[1], zero),
++                    _ => {
++                        self.blocks[b].body.push(i);
++                        continue;
++                    }
++                };
++                self.store(b, own, value);
++                self.call(b, barrier, vec![sync_op, group_shared_sync]);
++                let index = self.bin(b, Bin::And, source, mask);
++                let slot = self.element(b, shared, index);
++                // Keep the original SSA id: its consumers now see the shared load.
++                self.insts[i as usize].op = Op::Load(slot);
++                self.blocks[b].body.push(i);
++                // All reads finish before another exchange overwrites the same slots.
++                self.call(b, barrier, vec![sync_op, group_shared_sync]);
++            }
++        }
++        // DXIL rejects unused external declarations. The entry function is first and
++        // keeps its id. Other function references here are calls; entry metadata is
++        // constructed after lowering has finished.
++        let mut new_ids = Vec::with_capacity(self.funcs.len());
++        let mut next = 0;
++        self.funcs.retain(|f| {
++            new_ids.push(next);
++            let keep = !matches!(
++                f.name.as_str(),
++                "dx.op.waveGetLaneIndex"
++                    | "dx.op.waveReadLaneFirst.i32"
++                    | "dx.op.waveReadLaneAt.i32"
++            );
++            next += u32::from(keep);
++            keep
++        });
++        self.func_ids = self
++            .funcs
++            .iter()
++            .enumerate()
++            .map(|(i, f)| (f.name.clone(), i as u32))
++            .collect();
++        for instruction in &mut self.insts {
++            if let Op::Call(f, _) = &mut instruction.op {
++                *f = new_ids[*f as usize];
++            }
++        }
++        true
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::emit::bitcode::{Const, V};
++    use crate::emit::shader::{Shader, flags};
++
++    fn example() -> (Shader, Vec<V>) {
++        let mut s = Shader::new(false);
++        s.threads = Some([8, 8, 1]);
++        s.wave_size = Some(64);
++        s.flags = flags::WAVE_OPS;
++        let lane = s.op(
++            s.entry,
++            "waveGetLaneIndex",
++            Attr::ReadOnly,
++            s.t.i32,
++            111,
++            &[],
++        );
++        let four = s.m.i32(4);
++        let across = s.m.i32(32);
++        let high = s.m.i32(36);
++        let local = s.m.bin(s.entry, Bin::Xor, lane, four);
++        let reads = [across, high, local].map(|from| {
++            s.op(
++                s.entry,
++                "waveReadLaneAt.i32",
++                Attr::NoUnwind,
++                s.t.i32,
++                117,
++                &[lane, from],
++            )
++        });
++        s.m.terminate(s.entry, Term::Ret);
++        (s, reads.into())
++    }
++
++    fn value_at(m: &Module, v: V, lane: u32) -> u32 {
++        match v {
++            V::Const(i) => match m.consts[i as usize].1 {
++                Const::Int(n) => n as u32,
++                ref other => panic!("unexpected {other:?}"),
++            },
++            V::Inst(i) => match &m.insts[i as usize].op {
++                Op::Call(f, _)
++                    if m.funcs[*f as usize].name == "dx.op.flattenedThreadIdInGroup.i32" =>
++                {
++                    lane
++                }
++                Op::Bin(op, a, b) => {
++                    let (a, b) = (value_at(m, *a, lane), value_at(m, *b, lane));
++                    match op {
++                        Bin::And => a & b,
++                        Bin::Xor => a ^ b,
++                        Bin::Add => a + b,
++                        _ => panic!("unexpected {op:?}"),
++                    }
++                }
++                other => panic!("unexpected {other:?}"),
++            },
++            other => panic!("unexpected {other:?}"),
++        }
++    }
++
++    #[test]
++    fn split_wave_reads_exchange_the_requested_logical_lanes() {
++        let (mut s, reads) = example();
++        s.split_single_wave_reads();
++        assert_eq!(s.wave_size, None);
++        let m = &s.m;
++        let mut order = Vec::new();
++        for &i in &m.blocks[s.entry].body {
++            match &m.insts[i as usize].op {
++                Op::Store(V::Inst(slot), value) => {
++                    let Op::Gep(_, _, indices) = &m.insts[*slot as usize].op else {
++                        panic!("not shared")
++                    };
++                    for lane in 0..64 {
++                        assert_eq!(value_at(m, indices[1], lane), lane);
++                        assert_eq!(value_at(m, *value, lane), lane);
++                    }
++                    order.push("store");
++                }
++                Op::Load(_) => order.push("read"),
++                Op::Call(f, args) if m.funcs[*f as usize].name == "dx.op.barrier" => {
++                    assert_eq!(value_at(m, args[1], 0), 9);
++                    order.push("sync");
++                }
++                _ => {}
++            }
++        }
++        assert_eq!(order, ["store", "sync", "read", "sync"].repeat(3));
++        for (n, read) in reads.into_iter().enumerate() {
++            let V::Inst(i) = read else {
++                panic!("not an instruction")
++            };
++            let Op::Load(V::Inst(ptr)) = m.insts[i as usize].op else {
++                panic!("not a load")
++            };
++            let Op::Gep(_, _, indices) = &m.insts[ptr as usize].op else {
++                panic!("not shared")
++            };
++            for lane in 0..64 {
++                assert_eq!(value_at(m, indices[1], lane), [32, 36, lane ^ 4][n]);
++            }
++        }
++        #[cfg(windows)]
++        if let Some(path) = crate::emit::validator::Validator::default_path() {
++            let mut v = crate::emit::validator::Validator::load(Some(&path)).unwrap();
++            v.validate(&mut s.finish()).unwrap();
++        }
++    }
++
++    #[test]
++    fn split_wave_reads_preserve_native_requirements_for_other_groups_and_branches() {
++        let (mut small, _) = example();
++        small.threads = Some([4, 8, 1]);
++        small.split_single_wave_reads();
++        assert_eq!(small.wave_size, Some(64));
++        let (mut shared, _) = example();
++        shared.lds_dwords = 8;
++        shared.lds();
++        shared.split_single_wave_reads();
++        assert_eq!(shared.wave_size, Some(64));
++        let (mut guarded, _) = example();
++        let end = guarded.m.new_block();
++        let test = guarded.m.bool(true);
++        guarded
++            .m
++            .terminate(guarded.entry, Term::CondBr(test, end, end));
++        guarded.m.terminate(end, Term::Ret);
++        guarded.split_single_wave_reads();
++        assert_eq!(guarded.wave_size, Some(64));
++    }
++}
+diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
+index 9a8ac9c6cb141b1dcf06c05a32642b1e334cff02..108d2ad665bc69d86096471459abda3e468461df 100644
+--- a/crates/victory-shader/src/emit/lower.rs
++++ b/crates/victory-shader/src/emit/lower.rs
+@@ -40,6 +40,7 @@ pub(crate) struct Lowered {
+ }
+ 
+ pub(crate) struct Parts<'a> {
++    pub narrow_waves: bool,
+     pub native: &'a NativeProgram,
+     pub p: &'a Program,
+     pub st: &'a Structured,
+@@ -877,6 +878,9 @@ impl<'a> Lower<'a> {
+         let root_cbvs = self.s.root_cbvs.iter().map(|r| r.0).collect();
+         let root_srvs = self.s.root_srvs.iter().map(|r| r.0).collect();
+         let cmp_samplers = self.s.cmp_samplers;
++        if self.x.narrow_waves {
++            self.s.split_single_wave_reads();
++        }
+         Ok(Lowered {
+             cmp_samplers,
+             root_cbvs,
+diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
+index a283545bb92c5146203c673d1131be95f460b868..eeca130f03cdb717d6385cc46034bdc14da3e5a8 100644
+--- a/crates/victory-shader/src/emit/mod.rs
++++ b/crates/victory-shader/src/emit/mod.rs
+@@ -2,7 +2,8 @@
+ //! or mesh shader as a PC DXIL container (SM 6.6) that host D3D12 accepts.
+ //! Compute shaders keep the console's thread-group size; one that depends
+ //! on the lane layout (cross-lane operations) declares the console's wave
+-//! size (`WaveSize`), so the host device must support it.
++//! size (`WaveSize`). On narrower hardware, straight-line compute shaders
++//! that fill one 64-thread group can exchange values through group memory.
+ //!
+ //! What the host binds for a translated shader ([`HostShader`]):
+ //!
+@@ -146,6 +147,11 @@ pub struct UserData {
+ /// Translates the vertex, pixel, compute or mesh program of a console
+ /// shader container.
+ pub fn translate(container: &[u8]) -> Result<HostShader, ShaderError> {
++    translate_for_host(container, false)
++}
++
++/// Translates for a host whose compute waves may be narrower than 64 lanes.
++pub fn translate_for_host(container: &[u8], narrow_waves: bool) -> Result<HostShader, ShaderError> {
+     let c = Container::parse(container)?;
+     let dxil = c
+         .part(FourCC::DXIL)
+@@ -166,7 +172,7 @@ pub fn translate(container: &[u8]) -> Result<HostShader, ShaderError> {
+     let res = resource::track(&p, &native.layout, native.stage)?;
+     let io = io::raise(&p, &native)?;
+     let st = structure::structure(&p)?;
+-    emit(&c, &native, &p, &st, &io, &res)
++    emit_for_host(&c, &native, &p, &st, &io, &res, narrow_waves)
+ }
+ 
+ /// Emits a program whose earlier stages already ran.
+@@ -177,6 +183,18 @@ pub fn emit(
+     st: &structure::Structured,
+     io: &io::Io,
+     res: &resource::Resources,
++) -> Result<HostShader, ShaderError> {
++    emit_for_host(c, native, p, st, io, res, false)
++}
++
++fn emit_for_host(
++    c: &Container,
++    native: &NativeProgram,
++    p: &ir::Program,
++    st: &structure::Structured,
++    io: &io::Io,
++    res: &resource::Resources,
++    narrow_waves: bool,
+ ) -> Result<HostShader, ShaderError> {
+     let sig = |fourcc| -> Result<Vec<container::SigElement>, ShaderError> {
+         match c.part(fourcc) {
+@@ -227,6 +245,7 @@ pub fn emit(
+         _ => 0,
+     };
+     let l = lower::lower(&lower::Parts {
++        narrow_waves,
+         native,
+         p,
+         st,
+diff --git a/crates/victory-shader/src/emit/shader.rs b/crates/victory-shader/src/emit/shader.rs
+index 8389c17bea02bb5e91407dedb96608b02f2dcd20..4368fcf90770fecfb57bc9f752a01916d3ab646f 100644
+--- a/crates/victory-shader/src/emit/shader.rs
++++ b/crates/victory-shader/src/emit/shader.rs
+@@ -291,6 +291,21 @@ impl Shader {
+         self.annotate(block, h, props.0, props.1)
+     }
+ 
++    /// One logical wave owns the whole group and its temporary shared memory.
++    pub(crate) fn split_single_wave_reads(&mut self) {
++        if self.wave_size == Some(64)
++            && self.threads.is_some_and(|n| {
++                n.iter().copied().try_fold(1_u32, u32::checked_mul) == Some(64)
++            })
++            && self.lds.is_none()
++            && self.mesh.is_none()
++            && self.m.split_wave_reads(self.entry)
++        {
++            self.wave_size = None;
++            self.flags &= !flags::WAVE_OPS;
++        }
++    }
++
+     /// The finished container.
+     pub fn finish(mut self) -> Vec<u8> {
+         let ud_size = (self.user_data * 4).next_multiple_of(16);

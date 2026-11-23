@@ -1,0 +1,69 @@
+# VIctory na RTX 3060
+
+Scripts para compilar o VIctory no Windows e iniciar a instalação local de GTA VI para Xbox. O pacote reúne o lançador e dois patches sobre a revisão `015d45bf` do emulador. O Cargo gera o executável na máquina de quem for usar. Os arquivos do jogo vêm da própria instalação. [Código-fonte original da revisão utilizada](https://github.com/Marvisak/VIctory/tree/015d45bfff4d82e7afad89afe10dd24e5a402ef8)
+
+## Até onde o jogo chegou
+
+Com GTA VI para Xbox v1.0.2.1 e uma GeForce RTX 3060 de 12 GB, a correção eliminou a piscada periódica nas seis capturas afetadas durante a configuração. O jogo gravou o perfil, passou pela configuração na reinicialização e entrou na primeira missão. A janela mostrou os créditos de abertura sobre fundo preto, com áudio estéreo do jogo. O cenário, os personagens e suas texturas continuaram invisíveis. Movimento, câmera e cinco minutos de jogo no mundo aberto ainda precisam de validação visual.
+
+| Variante | Resultado observado |
+| --- | --- |
+| `Execucao` | Corrige a tabela de descritores compartilhada pelos shaders. Foi a variante usada para registrar os créditos e o áudio da introdução. |
+| `Diagnostico` | Acrescenta tradução de um subconjunto de operações wave64, pré-compilação de pipelines observados e captura dos primeiros quadros com malhas 3D. A RTX aceitou três shaders adicionais. Os 28 primeiros quadros 3D capturados no modo Series X continuaram escuros. |
+
+## Compilar
+
+Use Windows 10 ou 11 x64, CPU com AVX2 e GPU Direct3D 12 com Shader Model 6.6 e suporte a mesh shaders. Instale o Git, o Rust via rustup para `x86_64-pc-windows-msvc` e as ferramentas de compilação do Visual Studio com a carga de trabalho **Desenvolvimento para desktop com C++** e o Windows SDK.
+
+Abra o PowerShell para baixar e compilar o projeto.
+
+```powershell
+git clone https://github.com/luiksksk/gta6-victory-rtx3060.git
+cd gta6-victory-rtx3060
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\VIctory.ps1 -Acao Compilar
+```
+
+O script busca o commit exato do VIctory, aplica o patch, confere a árvore Git e compila com Rust `1.98.1` e `Cargo.lock`. A opção `RemoteSigned` aplica-se ao processo de PowerShell desse comando. As fontes e a compilação ficam em `%LOCALAPPDATA%\VIctory-RTX3060-Publico`.
+
+## Executar
+
+Aponte o lançador para a pasta que contém `game_scarlett_master.exe`. O caminho abaixo é um exemplo.
+
+```powershell
+.\Iniciar-VIctory.cmd -PastaJogo "D:\Jogos\GTA VI"
+```
+
+Também é possível abrir `Iniciar-VIctory.cmd` com dois cliques e informar a pasta. Cada variante mantém seus próprios saves e configurações em `%LOCALAPPDATA%\VIctory-RTX3060-Publico\dados` e seus arquivos de cache em `cache`.
+
+Para começar com uma cópia de um perfil do VIctory, informe a pasta que contém a subpasta do título `7952987A`. Na primeira execução, o lançador copia `saves` e `storage\settings` para o perfil da variante. Nas seguintes, use apenas `-PastaJogo`.
+
+```powershell
+.\Iniciar-VIctory.cmd -PastaJogo "D:\Jogos\GTA VI" -PerfilOrigem "D:\Perfis\VIctory\data"
+```
+
+## Investigar a tela preta
+
+Compile a variante de diagnóstico e confira a configuração antes de abrir o jogo. O parâmetro `-Console series-s` permite repetir o ensaio nesse modo na mesma placa.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\VIctory.ps1 -Acao Compilar -Variante Diagnostico
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\VIctory.ps1 -Acao Config -Variante Diagnostico -PastaJogo "D:\Jogos\GTA VI"
+```
+
+Para registrar a imagem apresentada e os alvos de cor intermediários, execute os comandos abaixo em uma sessão do PowerShell.
+
+```powershell
+$capturas = Join-Path $env:LOCALAPPDATA ("VIctory-RTX3060-Publico\capturas\" + (Get-Date -Format yyyyMMdd-HHmmss))
+New-Item -ItemType Directory -Path $capturas | Out-Null
+$env:VICTORY_CAPTURE = $capturas
+$env:VICTORY_CAPTURE_MESH_FRAMES = "16"
+$env:VICTORY_DUMP_MESH_TARGETS = "1"
+$env:VICTORY_QUEUE_TRACE = "1"
+.\Iniciar-VIctory.cmd -Variante Diagnostico -Console series-s -PastaJogo "D:\Jogos\GTA VI"
+```
+
+Os arquivos `frame-N.png` registram os quadros apresentados. Os nomes com `mesh-rtv` identificam alvos de cor de uma etapa anterior. No ensaio em modo Series S, um desses alvos tinha pixels coloridos, e os 16 quadros apresentados continuaram escuros.
+
+## Origem e licença
+
+Os patches modificam o VIctory, de Marvisak e colaboradores. Os scripts e as modificações publicados aqui seguem a mesma licença, **GPL-3.0-or-later**. [Projeto VIctory](https://github.com/Marvisak/VIctory) · [Texto da licença](LICENSE)
