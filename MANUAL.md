@@ -78,7 +78,21 @@ A variante experimental `Geometria` mostrou uma figura humana, fios e estruturas
 3. Para começar com um perfil configurado, acrescente `-PerfilOrigem "D:\Perfis\VIctory\data"` na primeira execução. Use os controles habituais para entrar na missão. A lista de pipelines observados acompanha o repositório e contém somente identificadores. Os shaders são lidos na sua instalação.
 
 
+### Mostrar a rua em cores planas
+
+A variante `CoresPlanas` mostrou a pista, a fachada de um prédio, postes e fios durante um movimento de câmera. Ela mantém os shaders de malha que calculam a geometria e substitui o shader de pixels de algumas passagens por cores de diagnóstico. Partes da rua ainda desaparecem. O ensaio na RTX 3060 terminou antes da cena da prisão.
+
+Na pasta do repositório, execute os dois comandos abaixo. O compilador `dxc.exe` acompanha o Windows SDK. O lançador procura a versão x64 instalada e compila o shader de diagnóstico nesta máquina.
+
+```powershell
+.\VIctory.ps1 -Acao Compilar -Variante CoresPlanas
+.\Iniciar-VIctory.cmd -Variante CoresPlanas -Console series-x -PastaJogo "D:\Jogos\GTA VI"
+```
+
+A primeira execução prepara o catálogo de shaders antes de abrir o jogo. O perfil e o cache ficam na pasta da variante. Para usar uma cópia de um perfil já configurado, acrescente `-PerfilOrigem` conforme a seção anterior.
+
 ## Se algo impedir o início
+
 
 | O que apareceu | O que fazer |
 | --- | --- |

@@ -15,6 +15,7 @@
 !/docs/shaders-eventos-30s.csv
 !/docs/shaders-validacao-e-pipelines.csv
 !/docs/shaders-com-pendencias.csv
+!/docs/shaders-pendentes-cores-planas.csv
 !/LICENSE
 !/VIctory.ps1
 !/Iniciar-VIctory.cmd
@@ -26,3 +27,6 @@
 !/patches/readback-35b054ec.patch
 !/patches/preparacao-shaders.patch
 !/patches/geometria-97c78d10.patch
+!/patches/cores-planas.patch
+!/patches/shaders-414-189.patch
+!/patches/descritor-escalar-233.patch

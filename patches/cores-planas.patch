@@ -1,0 +1,226 @@
+diff --git a/crates/victory-gpu/build.rs b/crates/victory-gpu/build.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..69ac940816225bb6196acfa21365a1ab4e61ed94
+--- /dev/null
++++ b/crates/victory-gpu/build.rs
+@@ -0,0 +1,15 @@
++use std::{env, path::PathBuf, process::Command};
++
++fn main() {
++    println!("cargo:rerun-if-changed=src/pipeline/geometria.hlsl");
++    println!("cargo:rerun-if-env-changed=VICTORY_GEOMETRIA_DXC");
++    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") { return; }
++    let compiler = env::var_os("VICTORY_GEOMETRIA_DXC").unwrap_or_else(|| "dxc.exe".into());
++    let output = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo output directory"));
++    for material in 0..6 {
++        let status = Command::new(&compiler).args(["-E","main","-T","ps_6_0","-Ges","-WX","-D"])
++            .arg(format!("MATERIAL={material}")).arg("-Fo").arg(output.join(format!("geometry-{material}.dxil")))
++            .arg("src/pipeline/geometria.hlsl").status().expect("DXC do Windows SDK");
++        assert!(status.success(), "DXC não conseguiu compilar o shader de diagnóstico");
++    }
++}
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+index 4b8df67d74e58260b5a6b84c7955d64f5d278300..13ebc8eeeac0aee3de90d7c4081a742e40bf1a78 100644
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -458,6 +458,13 @@ impl Host {
+         // Later lists may prepare an upload from bytes an earlier list reads back.
+         // Keep this title submission ordered on the single underlying host queue.
+         let mut submitted = self.submitted.lock().unwrap_or_else(|e| e.into_inner());
++        static SERIAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++        if *SERIAL.get_or_init(|| std::env::var_os("VICTORY_SINGLE_LIST").is_some()) {
++            for run in runs {
++                self.execute_batch(std::slice::from_ref(run), &mut submitted);
++            }
++            return;
++        }
+         for batch in runs.split_inclusive(|list| !list.deferred().readbacks.is_empty()) {
+             self.execute_batch(batch, &mut submitted);
+         }
+diff --git a/crates/victory-gpu/src/pipeline/geometria.hlsl b/crates/victory-gpu/src/pipeline/geometria.hlsl
+new file mode 100644
+index 0000000000000000000000000000000000000000..2f7d1bddf3716c34d2b29340384124045a05fa97
+--- /dev/null
++++ b/crates/victory-gpu/src/pipeline/geometria.hlsl
+@@ -0,0 +1,26 @@
++// Diagnostic display of rasterized title geometry. The depth gradients come
++// from the original vertex or mesh shader and the current title viewport.
++struct Colors {
++    float4 first : SV_Target0;
++    float4 second : SV_Target1;
++    float4 third : SV_Target2;
++    float4 fourth : SV_Target3;
++    float4 fifth : SV_Target4;
++    float4 sixth : SV_Target5;
++    float4 seventh : SV_Target6;
++    float4 eighth : SV_Target7;
++};
++Colors main(float4 position : SV_Position) {
++    float z = log2(max(abs(position.w), 1e-7));
++    float3 normal = normalize(float3(ddx(z) * 300.0, ddy(z) * 300.0, 1.0));
++    const float3 palette[6] = {
++        float3(0.88, 0.33, 0.16), float3(0.22, 0.72, 0.94),
++        float3(0.54, 0.37, 0.90), float3(0.30, 0.78, 0.49),
++        float3(0.95, 0.66, 0.22), float3(0.84, 0.40, 0.60)
++    };
++    float3 color = palette[MATERIAL] * (0.5 + 0.5 * saturate(dot(normal, normalize(float3(0.3, -0.6, 0.7)))));
++    Colors result;
++    result.first = result.second = result.third = result.fourth = float4(color, 1.0);
++    result.fifth = result.sixth = result.seventh = result.eighth = result.first;
++    return result;
++}
+diff --git a/crates/victory-gpu/src/pipeline/host.rs b/crates/victory-gpu/src/pipeline/host.rs
+index 321d2be4ef6c98dd7fb4099d6baca03a6148c5ea..c89864a48f3b06427682133b1072b0f587c61c78 100644
+--- a/crates/victory-gpu/src/pipeline/host.rs
++++ b/crates/victory-gpu/src/pipeline/host.rs
+@@ -282,6 +282,12 @@ impl HostPipeline {
+             );
+         }
+         let mesh = find("mesh");
++        static EXHIBIT_GEOMETRY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++        let flat = mesh.is_some() && find("pixel").is_some()
++            && g.is_some_and(|g| (2..=8).contains(&g.targets.NumRenderTargets)
++                && g.targets.RTFormats[..g.targets.NumRenderTargets as usize].iter().all(
++                    |f| matches!(f.0, 0 | 2 | 10 | 11 | 16 | 24 | 26 | 28 | 29 | 34 | 35 | 41 | 49 | 54 | 56 | 61 | 87 | 91)))
++            && *EXHIBIT_GEOMETRY.get_or_init(|| std::env::var_os("VICTORY_FLAT_GEOMETRY").is_some());
+         let stages = if let Some(cs) = compute {
+             vec![(cs, D3D12_SHADER_VISIBILITY_ALL)]
+         } else {
+@@ -291,7 +297,9 @@ impl HostPipeline {
+                 (None, None) => return refuse("no vertex or mesh shader", shaders),
+             };
+             let mut stages = vec![first];
+-            stages.extend(find("pixel").map(|ps| (ps, D3D12_SHADER_VISIBILITY_PIXEL)));
++            if !flat {
++                stages.extend(find("pixel").map(|ps| (ps, D3D12_SHADER_VISIBILITY_PIXEL)));
++            }
+             stages
+         };
+         if mesh.is_some() && !host()?.mesh_shaders() {
+@@ -383,6 +391,19 @@ impl HostPipeline {
+             }
+         };
+         let code = |i: usize| {
++            if i == 1 && flat {
++                static COLORS: [&[u8]; 6] = [
++                    include_bytes!(concat!(env!("OUT_DIR"), "/geometry-0.dxil")),
++                    include_bytes!(concat!(env!("OUT_DIR"), "/geometry-1.dxil")),
++                    include_bytes!(concat!(env!("OUT_DIR"), "/geometry-2.dxil")),
++                    include_bytes!(concat!(env!("OUT_DIR"), "/geometry-3.dxil")),
++                    include_bytes!(concat!(env!("OUT_DIR"), "/geometry-4.dxil")),
++                    include_bytes!(concat!(env!("OUT_DIR"), "/geometry-5.dxil")),
++                ];
++                let material = find("pixel").and_then(|s| u64::from_str_radix(&s.hash, 16).ok()).unwrap_or(0);
++                let bytes = COLORS[(material % COLORS.len() as u64) as usize];
++                return D3D12_SHADER_BYTECODE { pShaderBytecode: bytes.as_ptr().cast(), BytecodeLength: bytes.len() };
++            }
+             stages.get(i).and_then(|(s, _)| s.translated()).map_or(
+                 D3D12_SHADER_BYTECODE::default(),
+                 |t| D3D12_SHADER_BYTECODE {
+@@ -424,7 +445,7 @@ impl HostPipeline {
+             return refuse("graphics state not kept (plain description)", shaders);
+         };
+         if mesh.is_some() {
+-            let pso = match mesh_pipeline(&host.device, &root, code(0), code(1), g) {
++            let pso = match mesh_pipeline(&host.device, &root, code(0), code(1), g, flat) {
+                 Ok(pso) => pso,
+                 Err(e) => {
+                     tracing::warn!(error = %e, ?shaders, "host mesh pipeline refused");
+@@ -432,7 +453,7 @@ impl HostPipeline {
+                     return None;
+                 }
+             };
+-            tracing::info!(?shaders, "host mesh pipeline");
++            tracing::info!(?shaders, flat, targets = ?&g.targets.RTFormats[..g.targets.NumRenderTargets.min(8) as usize], "host mesh pipeline");
+             crate::host::name(&pso, || format!("{shaders:?}"));
+             return Some(HostPipeline {
+                 compute: false,
+@@ -513,6 +534,7 @@ fn mesh_pipeline(
+     ms: D3D12_SHADER_BYTECODE,
+     ps: D3D12_SHADER_BYTECODE,
+     g: &GraphicsState,
++    flat: bool,
+ ) -> windows::core::Result<ID3D12PipelineState> {
+     use windows::core::Interface;
+     /// A stream subobject: its type, then its description, pointer-aligned.
+@@ -531,11 +553,20 @@ fn mesh_pipeline(
+         dsv: Sub<DXGI_FORMAT>,
+         samples: Sub<DXGI_SAMPLE_DESC>,
+     }
++    let mut blend = g.blend;
++    if flat {
++        blend.AlphaToCoverageEnable = false.into();
++        for rt in &mut blend.RenderTarget {
++            rt.BlendEnable = false.into();
++            rt.LogicOpEnable = false.into();
++            rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL.0 as u8;
++        }
++    }
+     let mut stream = Stream {
+         root: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, root.as_raw()),
+         ms: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS, ms),
+         ps: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, ps),
+-        blend: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND, g.blend),
++        blend: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND, blend),
+         mask: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, g.sample_mask),
+         raster: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER, g.rasterizer),
+         depth: Sub(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL, g.depth),
+diff --git a/crates/victory-gpu/src/shader_cache.rs b/crates/victory-gpu/src/shader_cache.rs
+index c36cfe22501a8131ad6b318a9233a1cd14a54e83..39b8cba771e395da1cb128f5de2785c13f39504c 100644
+--- a/crates/victory-gpu/src/shader_cache.rs
++++ b/crates/victory-gpu/src/shader_cache.rs
+@@ -43,7 +43,12 @@ fn build() -> &'static [u8; 32] {
+     BUILD.get_or_init(|| {
+         let exe = std::env::current_exe().and_then(std::fs::read);
+         match exe {
+-            Ok(bytes) => *blake3::hash(&bytes).as_bytes(),
++            Ok(bytes) => {
++                let mut hasher = blake3::Hasher::new();
++                hasher.update(&bytes);
++                hasher.update(&victory_shader::emit::loop_limit().to_le_bytes());
++                *hasher.finalize().as_bytes()
++            }
+             Err(e) => {
+                 // Without it no entry can be trusted: a fresh key per run.
+                 tracing::warn!(error = %e, "cannot read our executable; shader cache unused");
+diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
+index 0e1249581cdf132932d0549c9f123129682b423f..c1c3f0be788e3144f82f19f5b5b40f3f13657578 100644
+--- a/crates/victory-shader/src/emit/lower.rs
++++ b/crates/victory-shader/src/emit/lower.rs
+@@ -208,7 +208,7 @@ struct Lower<'a> {
+ /// which hangs the host GPU until the driver resets it. A lane that
+ /// reaches the limit leaves the program as killed (a pixel discards).
+ // shortcut: a genuine loop of more iterations than this is cut short too.
+-const LOOP_LIMIT: u32 = 1 << 20;
++pub(super) const LOOP_LIMIT: u32 = 1 << 20;
+ 
+ /// Lane masks read as numbers (`s_bcnt1`, `s_ff1`, `v_mbcnt`, scalar
+ /// compares, bit tests) are ballots of the lanes' booleans, taken where the
+@@ -6440,7 +6440,7 @@ impl<'a> Lower<'a> {
+         let (phi, _) = self.counters[&to];
+         let one = self.s.m.i32(1);
+         let next = self.s.m.bin(c, Bin::Add, phi, one);
+-        let limit = self.s.m.i32(LOOP_LIMIT);
++        let limit = self.s.m.i32(super::loop_limit());
+         self.counters
+             .get_mut(&to)
+             .expect("header")
+diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
+index eeca130f03cdb717d6385cc46034bdc14da3e5a8..dc8b2deca171ae5a8d21f0887f17076db6f75dd9 100644
+--- a/crates/victory-shader/src/emit/mod.rs
++++ b/crates/victory-shader/src/emit/mod.rs
+@@ -83,6 +83,14 @@ mod diff_tests;
+ #[cfg(all(windows, any(test, feature = "host")))]
+ pub mod host;
+ mod lower;
++
++/// Optional loop bound for diagnostics. Keep a different cache key for each bound.
++pub fn loop_limit() -> u32 {
++    static LIMIT: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
++    *LIMIT.get_or_init(|| std::env::var("VICTORY_SHADER_LOOP_LIMIT").ok()
++        .and_then(|v| v.parse().ok()).filter(|&n| n > 0 && n <= lower::LOOP_LIMIT)
++        .unwrap_or(lower::LOOP_LIMIT))
++}
+ mod sampler;
+ mod shader;
+ #[cfg(windows)]

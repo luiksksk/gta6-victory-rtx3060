@@ -3,7 +3,7 @@
 param(
     [ValidateSet('Compilar','Executar','Config','PrepararShaders')]
     [string]$Acao = 'Executar',
-    [ValidateSet('Execucao','Diagnostico','SondaHDR','Geometria')]
+    [ValidateSet('Execucao','Diagnostico','SondaHDR','Geometria','CoresPlanas')]
     [string]$Variante = 'Execucao',
     [string]$PastaJogo,
     [string]$PerfilOrigem,
@@ -18,16 +18,18 @@ $arvores = @{
     Diagnostico = 'b080813ecbfda50f7921dce366063b3a2ff974b2'
     SondaHDR = 'e3a6fc73fdd78b4d0d8a1e74d979f029b60e40a8'
     Geometria = '85ae3d3dc2cb0770950a3c5cccaf78d694af3f98'
+    CoresPlanas = '9d796cbc1f369c9101d3e0123eb27dde574f1190'
 }
 # PowerShell accepts case-insensitive parameter values. Keep paths canonical.
 $tipo = switch ($Variante) {
     'Diagnostico' { 'Diagnostico' }
     'SondaHDR' { 'SondaHDR' }
     'Geometria' { 'Geometria' }
+    'CoresPlanas' { 'CoresPlanas' }
     default { 'Execucao' }
 }
 if ($tipo -eq 'SondaHDR') { $base = '35b054ec038c11bc8a0de66b1eee764b1ad4f101' }
-if ($tipo -eq 'Geometria') { $base = '97c78d1087808bd6ce5eabb5d566083a38406a90' }
+if ($tipo -in @('Geometria','CoresPlanas')) { $base = '97c78d1087808bd6ce5eabb5d566083a38406a90' }
 $arvore = $arvores[$tipo]
 $raiz = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'VIctory-RTX3060-Publico'
 $fontes = Join-Path $raiz 'fontes'
@@ -66,6 +68,7 @@ function Get-PatchedSource {
             Invoke-Git @('-C',$tmp,'checkout','--quiet','--detach','FETCH_HEAD')
             $patches = switch ($tipo) {
                 'Geometria' { 'geometria-97c78d10.patch' }
+                'CoresPlanas' { 'geometria-97c78d10.patch'; 'cores-planas.patch' }
                 'SondaHDR' { 'sonda-hdr-35b054ec.patch' }
                 'Diagnostico' { 'execucao-rtx3060.patch'; 'diagnostico-cena.patch' }
                 default { 'execucao-rtx3060.patch' }
@@ -134,10 +137,26 @@ if ($Acao -eq 'Compilar') {
     }
     Get-PatchedSource
     Push-Location -LiteralPath $fonte
+    $dxcAnterior = $env:VICTORY_GEOMETRIA_DXC
     try {
+        if ($tipo -eq 'CoresPlanas' -and !$dxcAnterior) {
+            $dxc = Get-Command dxc.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($dxc) { $env:VICTORY_GEOMETRIA_DXC = $dxc.Source }
+            else {
+                $kits = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -ErrorAction SilentlyContinue).KitsRoot10
+                if (!$kits) { $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10' }
+                $sdk = Get-ChildItem -Path (Join-Path $kits 'bin\*\x64\dxc.exe') -ErrorAction SilentlyContinue |
+                    Sort-Object { [version]$_.Directory.Parent.Name } -Descending | Select-Object -First 1
+                if (!$sdk) { throw 'A variante CoresPlanas requer dxc.exe do Windows SDK. Instale o SDK ou indique o caminho em VICTORY_GEOMETRIA_DXC.' }
+                $env:VICTORY_GEOMETRIA_DXC = $sdk.FullName
+            }
+        }
         & $cargoExe '+1.98.1' build --locked --profile diag --features diagnostics -p victory --target-dir $build -j 2
         if ($LASTEXITCODE -ne 0) { throw "A compilacao falhou com o codigo $LASTEXITCODE." }
-    } finally { Pop-Location }
+    } finally {
+        [Environment]::SetEnvironmentVariable('VICTORY_GEOMETRIA_DXC', $dxcAnterior)
+        Pop-Location
+    }
     if (!(Test-Path -LiteralPath $binario -PathType Leaf)) { throw 'O Cargo terminou sem produzir victory.exe.' }
     Write-Host "Compilado em $binario"
     return
@@ -166,13 +185,19 @@ if ($tipo -eq 'Execucao') {
     $config['VICTORY_LIVE_KEYS'] = $null
 }
 $anterior = @{}
-if ($tipo -eq 'Geometria') {
+if ($tipo -in @('Geometria','CoresPlanas')) {
     $config['VICTORY_LOW_VA_MIB'] = '512'
     $config['VICTORY_PREWARM_LOG'] = Join-Path (Join-Path $PSScriptRoot 'docs') 'pipelines-geometria.txt'
     $config['VICTORY_PRESENT_TARGET'] = if ($env:VICTORY_PRESENT_TARGET) { $env:VICTORY_PRESENT_TARGET } else { '2560x1440:28:0' }
     $config['VICTORY_EXPAND_SCENE_HDR'] = '1'
     $config['VICTORY_INDIRECT'] = '1'
     $config['VICTORY_INDIRECT_AFTER_MESH_FRAMES'] = '90'
+}
+if ($tipo -eq 'CoresPlanas') {
+    $config['VICTORY_FLAT_GEOMETRY'] = '1'
+    $config['VICTORY_SINGLE_LIST'] = '1'
+    $config['VICTORY_INDIRECT'] = $null
+    $config['VICTORY_SHADER_LOOP_LIMIT'] = '32'
 }
 foreach ($nome in $config.Keys) { $anterior[$nome] = [Environment]::GetEnvironmentVariable($nome) }
 function Set-ProcessEnvironment([string]$Nome, $Valor) {

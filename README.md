@@ -6,6 +6,8 @@ Scripts para compilar o VIctory no Windows e iniciar a instalação local de GTA
 
 ## Até onde o jogo chegou
 
+**Para ver a rua em 3D, use a variante experimental `CoresPlanas`.** Em modo Series X na RTX 3060, a janela mostrou a pista, postes, fios e a estrutura de um prédio com a câmera em movimento. Parte das superfícies continua preta. [Manual de cores planas](MANUAL.md#mostrar-a-rua-em-cores-planas)
+
 Em modo Series X, a variante experimental `Geometria` mostrou na janela uma silhueta humana, cabos e partes da rua. Ela exibe um alvo de cor intermediário do jogo após a primeira submissão de malhas. A iluminação e grande parte do cenário continuam ausentes. Em um teste separado, os shaders locais 2400, 2401 e 2402 passaram pelo validador e pelo driver na integração #414. [Como experimentar](MANUAL.md#ver-a-geometria-da-cena) · [Resultados por shader](docs/geometria-e-wave64.md)
 
 Com GTA VI para Xbox v1.0.2.1 e uma GeForce RTX 3060 de 12 GB, a correção eliminou a piscada periódica nas seis capturas afetadas durante a configuração. O jogo gravou o perfil, passou pela configuração na reinicialização e entrou na primeira missão. A janela mostrou os créditos de abertura sobre fundo preto, com áudio estéreo do jogo. O cenário, os personagens e suas texturas continuaram invisíveis. Movimento, câmera e cinco minutos de jogo no mundo aberto ainda precisam de validação visual.

@@ -1,0 +1,119 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index bab4a7e1a6b0cd7e3e84a0ff1ab86ef8e3732afc..1036267f7cc5a8569400914b26e41073e394f7a0 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -656,7 +656,7 @@ dependencies = [
+  "victory-hle",
+  "victory-loader",
+  "victory-pe",
+- "victory-shader",
++ "victory-shader 0.1.0",
+  "walkdir",
+ ]
+ 
+@@ -695,7 +695,7 @@ dependencies = [
+  "tracing",
+  "victory-formats",
+  "victory-pipeline",
+- "victory-shader",
++ "victory-shader 0.1.0",
+  "windows",
+  "windows-sys",
+ ]
+@@ -756,10 +756,21 @@ version = "0.1.0"
+ dependencies = [
+  "miniz_oxide",
+  "thiserror",
++ "victory-shader 0.1.0 (git+https://github.com/Marvisak/VIctory.git?rev=c04788537417107677d8dc5a90484f217ee22d2f)",
+  "windows",
+  "windows-sys",
+ ]
+ 
++[[package]]
++name = "victory-shader"
++version = "0.1.0"
++source = "git+https://github.com/Marvisak/VIctory.git?rev=c04788537417107677d8dc5a90484f217ee22d2f#c04788537417107677d8dc5a90484f217ee22d2f"
++dependencies = [
++ "miniz_oxide",
++ "thiserror",
++ "windows-sys",
++]
++
+ [[package]]
+ name = "walkdir"
+ version = "2.5.1"
+diff --git a/crates/victory-gpu/src/shader_cache.rs b/crates/victory-gpu/src/shader_cache.rs
+index c2cfd6c1b6f5713acd7cb6476e098a32e1c3614d..f62aab1a3ed347f6b9152fdbc4ff7712f6781e96 100644
+--- a/crates/victory-gpu/src/shader_cache.rs
++++ b/crates/victory-gpu/src/shader_cache.rs
+@@ -71,7 +71,7 @@ fn build() -> &'static [u8; 32] {
+ /// `target`'s wave sizes, from the cache when there is one.
+ pub(crate) fn host_shader(container: &[u8], target: Target) -> Result<HostShader, String> {
+     let translate =
+-        |c: &[u8]| victory_shader::emit::translate_for(c, target).map_err(|e| e.to_string());
++        |c: &[u8]| victory_shader::emit::translate_for_adapter(c, target);
+     match CACHE.get() {
+         Some(cache) => cached(cache, &key(build(), target), container, translate),
+         None => translate(container),
+diff --git a/crates/victory-shader/Cargo.toml b/crates/victory-shader/Cargo.toml
+index edfd1b969b4890b628f8b7802d7a655a44d34c13..5536159110a20bf12e5e4d7cf5ef8e03415040fe 100644
+--- a/crates/victory-shader/Cargo.toml
++++ b/crates/victory-shader/Cargo.toml
+@@ -10,6 +10,7 @@ publish.workspace = true
+ [dependencies]
+ thiserror.workspace = true
+ miniz_oxide.workspace = true
++wave32-translator = { package = "victory-shader", git = "https://github.com/Marvisak/VIctory.git", rev = "c04788537417107677d8dc5a90484f217ee22d2f" }
+ 
+ [features]
+ # Host D3D12 pipeline checks (`emit::host`).
+diff --git a/crates/victory-shader/src/emit/mod.rs b/crates/victory-shader/src/emit/mod.rs
+index c092bcacb15c4fe73cf78d2209ce8dfdcbd95139..63dcdb4f4720a5e2cc98adccacbbe766e10ebab3 100644
+--- a/crates/victory-shader/src/emit/mod.rs
++++ b/crates/victory-shader/src/emit/mod.rs
+@@ -278,6 +278,45 @@ pub fn translate_for(container: &[u8], target: Target) -> Result<HostShader, Sha
+     emit(&c, &native, &p, &st, &io, &res, target)
+ }
+ 
++/// Tries the split-wave compute lowering when the primary translator cannot
++/// represent a console wave on a 32-lane adapter. Both paths keep the
++/// original container and derive bindings from it.
++pub fn translate_for_adapter(container: &[u8], target: Target) -> Result<HostShader, String> {
++    let primary = match translate_for(container, target) {
++        Ok(shader) => return Ok(shader),
++        Err(ShaderError::Unsupported { offset, what })
++            if target.lanes_min == 32 && target.lanes_max == 32 && what.contains("wave64") =>
++            ShaderError::Unsupported { offset, what },
++        Err(error) => return Err(error.to_string()),
++    };
++    use wave32_translator::{HwStage as AlternateStage, RootType as AlternateRoot, emit as alternate};
++    let options = alternate::TranslateOptions { wave64: alternate::Wave64Mode::Wave32 };
++    let shader = alternate::translate_with(container, options)
++        .map_err(|error| format!("{primary}; split Wave64: {error}"))?;
++    if shader.stage != AlternateStage::Cs {
++        return Err(primary.to_string());
++    }
++    let user_data = shader.user_data.into_iter().map(|u| UserData {
++        index: u.index, slot: u.slot, dword: u.dword,
++        root: match u.root {
++            AlternateRoot::Constants => RootType::Constants,
++            AlternateRoot::Descriptor => RootType::Descriptor,
++            AlternateRoot::Table => RootType::Table,
++            AlternateRoot::ImmediateSampler => RootType::ImmediateSampler,
++            AlternateRoot::ResourceHeap => RootType::ResourceHeap,
++            AlternateRoot::SamplerHeap => RootType::SamplerHeap,
++            AlternateRoot::Other(value) => RootType::Other(value),
++        },
++    }).collect();
++    Ok(HostShader {
++        stage: HwStage::Cs, dxil: shader.dxil, user_data,
++        static_samplers: shader.samplers.iter().copied().map(StaticSampler::from_words).collect(),
++        samplers: shader.samplers, root_cbvs: shader.root_cbvs, root_srvs: shader.root_srvs,
++        // This version of the split-wave emitter never declares a stride table.
++        stride_table: false,
++    })
++}
++
+ /// Emits a program whose earlier stages already ran, for `target`.
+ pub fn emit(
+     c: &Container,
