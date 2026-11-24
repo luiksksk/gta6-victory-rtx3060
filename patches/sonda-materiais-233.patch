@@ -1,0 +1,441 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 67c73415838761b2a43605bd85b0293af1dbe796..7547e8443da10b10bd81ce805dbcfd0412bc2f5b 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -698,6 +698,7 @@ dependencies = [
+  "victory-shader 0.1.0",
+  "victory-shader 0.1.0 (git+https://github.com/Marvisak/VIctory.git?rev=c04788537417107677d8dc5a90484f217ee22d2f)",
+  "victory-shader 0.1.0 (git+https://github.com/Marvisak/VIctory.git?rev=d3917df4e9ab836f8bbf997590310cf40c835202)",
++ "victory-shader-descritor",
+  "windows",
+  "windows-sys",
+ ]
+@@ -782,6 +783,16 @@ dependencies = [
+  "windows-sys",
+ ]
+ 
++[[package]]
++name = "victory-shader-descritor"
++version = "0.1.0"
++dependencies = [
++ "miniz_oxide",
++ "thiserror",
++ "windows",
++ "windows-sys",
++]
++
+ [[package]]
+ name = "walkdir"
+ version = "2.5.1"
+diff --git a/crates/victory-gpu/Cargo.toml b/crates/victory-gpu/Cargo.toml
+index 224ac67ac2d07de62f9a3dd013ecc6f7617b5a2c..c403df806bd513298a3bb5c98e42bf69540a683f 100644
+--- a/crates/victory-gpu/Cargo.toml
++++ b/crates/victory-gpu/Cargo.toml
+@@ -15,6 +15,7 @@ anyhow.workspace = true
+ victory-formats.workspace = true
+ victory-pipeline.workspace = true
+ victory-shader.workspace = true
++descriptor-translator = { package = "victory-shader-descritor", path = "../victory-shader-descritor" }
+ material-translator = { package = "victory-shader", git = "https://github.com/Marvisak/VIctory.git", rev = "d3917df4e9ab836f8bbf997590310cf40c835202" }
+ wave-translator = { package = "victory-shader", git = "https://github.com/Marvisak/VIctory.git", rev = "c04788537417107677d8dc5a90484f217ee22d2f" }
+ 
+diff --git a/crates/victory-gpu/src/capture.rs b/crates/victory-gpu/src/capture.rs
+index 3bb077598441de69a25938979c409762219654cc..ee75a70aec442ffbe3c12efca7c2405da9e193fc 100644
+--- a/crates/victory-gpu/src/capture.rs
++++ b/crates/victory-gpu/src/capture.rs
+@@ -334,7 +334,12 @@ pub(crate) fn present_override(frame: u64) -> Option<std::sync::Arc<crate::resou
+         return None;
+     }
+     let (_, list) = std::mem::take(&mut *p);
+-    list.into_iter().nth(n).map(|(_, t)| t)
++    list.into_iter().nth(n).map(|(resource, texture)| {
++        if pass_trace() {
++            tracing::info!(frame, resource = format_args!("{resource:#x}"), n, "pass present source");
++        }
++        texture
++    })
+ }
+ 
+ pub(crate) fn note_target(resource: crate::object::This) {
+@@ -639,6 +644,86 @@ pub(crate) fn black(buffer: &ID3D12Resource) -> bool {
+     }
+ }
+ 
++/// A successful MS draw can modify several MRTs. Keep both grid copies
++/// until the fence for the submission that executed this list is complete.
++pub(crate) struct PixelPair {
++    resource: usize,
++    slot: usize,
++    stages: String,
++    before: ID3D12Resource,
++    after: ID3D12Resource,
++}
++
++pub(crate) type Grid = (usize, usize, ID3D12Resource, ID3D12Resource);
++
++pub(crate) fn before_mesh(list: &crate::host::HostList, targets: &[usize]) -> Vec<Grid> {
++    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    if !*ENABLED.get_or_init(|| std::env::var_os("VICTORY_PIXEL_GRID").is_some()) { return Vec::new(); }
++    let frame = PRESENTED_SCENE_FRAMES.load(Ordering::Relaxed);
++    if !matches!(frame, 4 | 12 | 24 | 36 | 48) { return Vec::new(); }
++    static BUDGET: std::sync::Mutex<(u64, usize)> = std::sync::Mutex::new((0, 0));
++    let Some(host) = crate::host::host() else { return Vec::new() };
++    let mut copies = Vec::new();
++    for (slot, &resource) in targets.iter().take(3).enumerate() {
++        let Some(texture) = crate::resource::host_resource(resource as crate::object::This) else { continue };
++        // Only subresource zero of these single-subresource scene targets.
++        let desc = unsafe { texture.GetDesc() };
++        if (desc.Width, desc.Height, desc.MipLevels, desc.DepthOrArraySize, desc.SampleDesc.Count) != (2560, 1440, 1, 1, 1)
++            || !matches!(desc.Format.0, 27..=29) { continue; }
++        let mut budget = BUDGET.lock().unwrap_or_else(|e| e.into_inner());
++        if budget.0 != frame { *budget = (frame, 0); }
++        if budget.1 >= 240 { break; }
++        budget.1 += 1;
++        drop(budget);
++        if let Some(before) = sample_rtv(&host.device, &list.list, texture) {
++            copies.push((resource, slot, texture.clone(), before));
++        }
++    }
++    copies
++}
++
++fn sample_rtv(device: &ID3D12Device, list: &ID3D12GraphicsCommandList, texture: &ID3D12Resource) -> Option<ID3D12Resource> {
++    let rt = D3D12_RESOURCE_STATE_RENDER_TARGET;
++    let src = D3D12_RESOURCE_STATE_COPY_SOURCE;
++    // prepare_for set RENDER_TARGET. Restore that same state before returning.
++    unsafe { list.ResourceBarrier(&[crate::host::transition(texture, rt, src)]) };
++    let read = probe(device, list, texture);
++    unsafe { list.ResourceBarrier(&[crate::host::transition(texture, src, rt)]) };
++    read
++}
++
++pub(crate) fn after_mesh(list: &crate::host::HostList, grids: Vec<Grid>, stages: String) {
++    let Some(host) = crate::host::host() else { return };
++    let mut pairs = list.pixel_pairs.lock().unwrap_or_else(|e| e.into_inner());
++    for (resource, slot, texture, before) in grids {
++        let after = sample_rtv(&host.device, &list.list, &texture);
++        // Retain a successful first copy even when the second allocation fails.
++        if let Some(after) = after {
++            pairs.push(PixelPair {resource, slot, stages: stages.clone(), before, after});
++        } else {
++            list.keep_grid(before);
++        }
++    }
++}
++
++impl PixelPair {
++    pub(crate) fn report(&self, fence: u64, list_index: usize, draw_sample: usize) {
++        fn words(buffer: &ID3D12Resource) -> Option<Vec<u32>> {
++            let mut ptr = std::ptr::null_mut();
++            unsafe {
++                buffer.Map(0, None, Some(&mut ptr)).ok()?;
++                let values = (0..GRID*GRID).map(|i| ptr.cast::<u8>().add(i as usize * SLOT as usize).cast::<u32>().read_unaligned()).collect();
++                buffer.Unmap(0, None);
++                Some(values)
++            }
++        }
++        if let (Some(before), Some(after)) = (words(&self.before), words(&self.after)) {
++            tracing::info!(fence, list_index, draw_sample, slot = self.slot, resource = format_args!("{:#x}", self.resource),
++                stages = %self.stages, before = ?before, after = ?after, "pass pixel grids");
++        }
++    }
++}
++
+ /// The brightest probed channel of the last frames, oldest first: a fade
+ /// darkens over several, a glitch drops at once.
+ static LEVELS: std::sync::Mutex<std::collections::VecDeque<u8>> =
+@@ -672,3 +757,9 @@ mod tests {
+         assert_eq!(super::crc32(b"IEND"), 0xae42_6082);
+     }
+ }
++
++pub(crate) fn pass_trace() -> bool {
++    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *ON.get_or_init(|| std::env::var_os("VICTORY_PASS_TRACE").is_some())
++        && (1..90).contains(&PRESENTED_SCENE_FRAMES.load(Ordering::Relaxed))
++}
+diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
+index 46f2ca144bef486bf1827fbe79b2f33514b97b4b..3dc8545b5fccb0d91f67f9cd30f1988842240826 100644
+--- a/crates/victory-gpu/src/draw.rs
++++ b/crates/victory-gpu/src/draw.rs
+@@ -67,6 +67,8 @@ pub(crate) struct State {
+     index: IndexView,
+     /// Bound render target and depth resources, for their host states.
+     targets: Vec<usize>,
++    #[cfg(feature = "diagnostics")]
++    trace_slots: Vec<usize>,
+     depth: usize,
+     /// The title's primitive topology (the host's may differ).
+     topology: u32,
+@@ -249,14 +251,27 @@ impl State {
+         self.index = view.copied().unwrap_or_default();
+     }
+ 
++    #[cfg(feature = "diagnostics")]
++    fn pass_event(&self, list: &HostList, op: &str, issued: bool) {
++        if crate::capture::pass_trace() {
++            let stages = crate::pipeline::stage_names(self.pipeline as This);
++            let event = format!("{op} {issued} {stages} {:x?}", self.trace_slots);
++            list.pass_events.lock().unwrap_or_else(|e| e.into_inner()).push(event);
++        }
++    }
++
+     /// Render targets and depth, set on the host list at once.
+     pub(crate) fn set_targets(&mut self, list: &HostList, handles: &[u64], depth: u64) {
+         let Some(host) = crate::host::host() else {
+             return;
+         };
+         self.targets.clear();
++        #[cfg(feature = "diagnostics")]
++        self.trace_slots.clear();
+         let mut rtvs = Vec::new();
+         for &h in handles {
++            #[cfg(feature = "diagnostics")]
++            self.trace_slots.push(0);
+             let Some(record) = crate::descriptor::rtv_record(h) else {
+                 once!(
+                     handle = format_args!("{h:#x}"),
+@@ -271,6 +286,8 @@ impl State {
+             };
+             self.targets.push(record.resource as usize);
+             #[cfg(feature = "diagnostics")]
++            if let Some(slot) = self.trace_slots.last_mut() { *slot = record.resource as usize; }
++            #[cfg(feature = "diagnostics")]
+             crate::capture::note_target(record.resource);
+             rtvs.push(host.rtv(texture, record.desc().as_ref()));
+         }
+@@ -520,6 +537,8 @@ impl State {
+ 
+     /// Runs a dispatch on the host.
+     pub(crate) fn dispatch(&mut self, list: &HostList, x: u32, y: u32, z: u32) {
++        #[cfg(feature = "diagnostics")]
++        self.pass_event(list, "compute", crate::pipeline::host_pipeline(self.pipeline as This).is_some_and(|p| p.compute));
+         let Some(p) = crate::pipeline::host_pipeline(self.pipeline as This) else {
+             once!(
+                 pipeline = format_args!("{:#x}", self.pipeline),
+@@ -588,8 +607,14 @@ impl State {
+                     #[cfg(feature = "diagnostics")]
+                     list.note_op(|| self.op_text(format!("mesh {x}"), false));
+                     // SAFETY: an open list with everything set.
++                    #[cfg(feature = "diagnostics")]
++                    let grids = crate::capture::before_mesh(list, &self.trace_slots);
+                     unsafe { l6.DispatchMesh(x, 1, 1) };
+                     #[cfg(feature = "diagnostics")]
++                    if !grids.is_empty() {
++                        crate::capture::after_mesh(list, grids, crate::pipeline::stage_names(self.pipeline as This));
++                    }
++                    #[cfg(feature = "diagnostics")]
+                     if x != 0 && crate::capture::track_meshes() {
+                         list.mesh_dispatches.fetch_add(1, Ordering::Relaxed);
+                     }
+@@ -598,6 +623,8 @@ impl State {
+                 }
+                 Err(_) => false,
+             };
++        #[cfg(feature = "diagnostics")]
++        self.pass_event(list, "mesh", ran);
+         if !ran {
+             DROPPED.fetch_add(1, Ordering::Relaxed);
+             #[cfg(feature = "diagnostics")]
+@@ -851,6 +878,8 @@ impl State {
+             };
+             DRAWN.fetch_add(1, Ordering::Relaxed);
+         }
++        #[cfg(feature = "diagnostics")]
++        self.pass_event(list, "draw", ran);
+         if !ran {
+             DROPPED.fetch_add(1, Ordering::Relaxed);
+             #[cfg(feature = "diagnostics")]
+@@ -938,6 +967,8 @@ impl State {
+             };
+             DRAWN.fetch_add(1, Ordering::Relaxed);
+         }
++        #[cfg(feature = "diagnostics")]
++        self.pass_event(list, "indexed", ran);
+         if !ran {
+             DROPPED.fetch_add(1, Ordering::Relaxed);
+             #[cfg(feature = "diagnostics")]
+@@ -960,6 +991,8 @@ impl State {
+         arguments: u64,
+         count: Option<u64>,
+     ) -> bool {
++        #[cfg(feature = "diagnostics")]
++        self.pass_event(list, "indirect-request", false);
+         const DRAW: u32 = 0;
+         const INDEXED: u32 = 1;
+         const DISPATCH: u32 = 2;
+@@ -1041,6 +1074,8 @@ impl State {
+         });
+         // SAFETY: an open list with everything set; the buffers are host
+         // copies the list keeps alive (refresh), the signature is cached.
++        #[cfg(feature = "diagnostics")]
++        self.pass_event(list, "indirect-issued", true);
+         unsafe {
+             list.list.ExecuteIndirect(
+                 &signature,
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+index 04738c80cd752a64f93715658c3610ebaa1de097..3805468bd6437e584edde1476e6d33a338c3b990 100644
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -260,6 +260,12 @@ pub(crate) struct HostList {
+     /// data without marker texts), with the host GPU range a copy reads.
+     #[cfg(feature = "diagnostics")]
+     notes: Mutex<Vec<Note>>,
++    #[cfg(feature = "diagnostics")]
++    pub(crate) pass_events: Mutex<Vec<String>>,
++    #[cfg(feature = "diagnostics")]
++    pub(crate) pixel_pairs: Mutex<Vec<crate::capture::PixelPair>>,
++    #[cfg(feature = "diagnostics")]
++    orphan_grids: Mutex<Vec<ID3D12Resource>>,
+     /// Nonempty DispatchMesh commands recorded in this list since its last reset.
+     #[cfg(feature = "diagnostics")]
+     pub(crate) mesh_dispatches: AtomicU32,
+@@ -374,6 +380,7 @@ impl Host {
+                     )
+                     .is_ok()
+             };
++            tracing::info!(supported = ok && options.WaveOps.as_bool(), min = options.WaveLaneCountMin, max = options.WaveLaneCountMax, "adapter wave range");
+             (ok && options.WaveOps.as_bool() && options.WaveLaneCountMin > 0
+                 && options.WaveLaneCountMax >= options.WaveLaneCountMin)
+                 .then_some((options.WaveLaneCountMin, options.WaveLaneCountMax))
+@@ -460,6 +467,12 @@ impl Host {
+                 budget: OnceLock::new(),
+                 #[cfg(feature = "diagnostics")]
+                 notes: Mutex::default(),
++            #[cfg(feature = "diagnostics")]
++            pass_events: Mutex::default(),
++                #[cfg(feature = "diagnostics")]
++                pixel_pairs: Mutex::default(),
++                #[cfg(feature = "diagnostics")]
++                orphan_grids: Mutex::default(),
+                 #[cfg(feature = "diagnostics")]
+                 mesh_dispatches: AtomicU32::new(0),
+             })
+@@ -498,6 +511,16 @@ impl Host {
+         }
+         batch.prepare_bindless();
+         *submitted += 1;
++        #[cfg(feature = "diagnostics")]
++        if crate::capture::pass_trace() {
++            for (index, list) in runs.iter().enumerate() {
++                let events = list.pass_events.lock().unwrap_or_else(|e| e.into_inner());
++                if !events.is_empty() {
++                    tracing::info!(fence = *submitted, index, frame = crate::queue::presented() + 1,
++                        events = %events.join("|"), "pass list submitted");
++                }
++            }
++        }
+         let prepared = std::time::Instant::now();
+         // SAFETY: closed lists; the fence and event are ours.
+         let waited = unsafe {
+@@ -533,6 +556,12 @@ impl Host {
+         {
+             fail(format_args!("host fence {} did not complete ({waited:?})", *submitted));
+         }
++        #[cfg(feature = "diagnostics")]
++        for (index, list) in runs.iter().enumerate() {
++            for (sample, pair) in list.pixel_pairs.lock().unwrap_or_else(|e| e.into_inner()).iter().enumerate() {
++                pair.report(*submitted, index, sample);
++            }
++        }
+         // What shaders wrote goes back before the bottom-of-pipe writes,
+         // which tell the title the GPU is done; each range once per
+         // submission, however many dispatches declared it (the world's
+@@ -754,6 +783,11 @@ impl Host {
+ }
+ 
+ impl HostList {
++    #[cfg(feature = "diagnostics")]
++    pub(crate) fn keep_grid(&self, buffer: ID3D12Resource) {
++        self.orphan_grids.lock().unwrap_or_else(|e| e.into_inner()).push(buffer);
++    }
++
+     pub(crate) fn close(&self) {
+         // SAFETY: our list.
+         if let Err(e) = unsafe { self.list.Close() } {
+@@ -772,6 +806,13 @@ impl HostList {
+         #[cfg(feature = "diagnostics")]
+         self.notes.lock().unwrap_or_else(|e| e.into_inner()).clear();
+         #[cfg(feature = "diagnostics")]
++        self.pass_events.lock().unwrap_or_else(|e| e.into_inner()).clear();
++        #[cfg(feature = "diagnostics")]
++        {
++            self.pixel_pairs.lock().unwrap_or_else(|e| e.into_inner()).clear();
++            self.orphan_grids.lock().unwrap_or_else(|e| e.into_inner()).clear();
++        }
++        #[cfg(feature = "diagnostics")]
+         self.mesh_dispatches.store(0, Ordering::Relaxed);
+         {
+             let mut scratch = self.scratch.lock().unwrap_or_else(|e| e.into_inner());
+diff --git a/crates/victory-gpu/src/pipeline.rs b/crates/victory-gpu/src/pipeline.rs
+index 7e8a946beb44981c79f8e9618ebcc8c15dcc918c..470f9e78f44ed81d82d3a47dfe672d68ef040ccb 100644
+--- a/crates/victory-gpu/src/pipeline.rs
++++ b/crates/victory-gpu/src/pipeline.rs
+@@ -249,6 +249,12 @@ pub(crate) fn host_pipeline<'a>(this: This) -> Option<&'a host::HostPipeline> {
+         .as_ref()
+ }
+ 
++#[cfg(all(windows, feature = "diagnostics"))]
++pub(crate) fn stage_names(this: This) -> String {
++    if this.is_null() { return "[]".into(); }
++    format!("{:?}", pipeline(this).shaders)
++}
++
+ /// The stage's container, if it has one.
+ fn copy(stage: &'static str, code: &Bytecode) -> Option<Arc<Shader>> {
+     if code.code.is_null() || code.size == 0 {
+diff --git a/crates/victory-gpu/src/shader_cache/adapter.rs b/crates/victory-gpu/src/shader_cache/adapter.rs
+index 01f3c3a153a017288df8ea8339e8ff0c92acf9dc..9ca16dd11f87d6d734ca8b9fee0790b18c58ffb3 100644
+--- a/crates/victory-gpu/src/shader_cache/adapter.rs
++++ b/crates/victory-gpu/src/shader_cache/adapter.rs
+@@ -59,6 +59,16 @@ pub(super) fn for_wave32(container: &[u8], primary: Result<HostShader, String>)
+         Ok(_) => "needs an additional stride binding or another wave width".to_owned(),
+         Err(error) => error.to_string(),
+     };
++    // This backend supports mesh waterfall descriptors with the original root ABI.
++    let mesh_target = descriptor_translator::emit::Target { lanes_min: 32, lanes_max: 32 };
++    let is_mesh = Container::parse(container).ok()
++        .and_then(|c| c.part(FourCC::DXIL).map(|part| part.data.get(2..4) == Some(&13u16.to_le_bytes())))
++        .unwrap_or(false);
++    if is_mesh && let Ok(shader) = descriptor_translator::emit::translate_for(container, mesh_target)
++        && shader.stage == descriptor_translator::HwStage::Ms && permits_wave32(&shader.dxil)
++    {
++        return import_shader!(descriptor_translator, shader);
++    }
+     use wave_translator::emit::{TranslateOptions, Wave64Mode, translate_with};
+     let options = TranslateOptions { wave64: Wave64Mode::Wave32 };
+     match translate_with(container, options) {
+diff --git a/crates/victory-shader-descritor/Cargo.toml b/crates/victory-shader-descritor/Cargo.toml
+index edfd1b969b4890b628f8b7802d7a655a44d34c13..f0ee4ba12a55d793c6975b6970344a493914c6d7 100644
+--- a/crates/victory-shader-descritor/Cargo.toml
++++ b/crates/victory-shader-descritor/Cargo.toml
+@@ -1,5 +1,5 @@
+ [package]
+-name = "victory-shader"
++name = "victory-shader-descritor"
+ description = "Xbox shader containers (DXBC/DXIL + precompiled GFX10) to host shaders."
+ version.workspace = true
+ edition.workspace = true
+diff --git a/crates/victory-shader-descritor/src/emit/lower.rs b/crates/victory-shader-descritor/src/emit/lower.rs
+index 3ddd1a36c6b6a579898cb2bce8f06367db54da08..1b2ce723b4ba3696ac413d852fb826906c4aa6ee 100644
+--- a/crates/victory-shader-descritor/src/emit/lower.rs
++++ b/crates/victory-shader-descritor/src/emit/lower.rs
+@@ -3146,6 +3146,18 @@ impl<'a> Lower<'a> {
+                 }
+                 (props, None)
+             }
++            Fields::Smem { .. } if un.starts_with("s_buffer_") => {
++                if used.is_some_and(|u| u.kind == ResourceType::Cbv) {
++                    return Err("a constant buffer's descriptor read as data");
++                }
++                let stride = used.map_or(0, |u| u.stride);
++                let props = if stride >= 4 && stride.is_multiple_of(4) {
++                    (12 | u, stride)
++                } else {
++                    (11 | u, 0)
++                };
++                (props, None)
++            }
+             _ => return Err("a scalar memory read as data"),
+         };
+         let h = self.handle(site, &src, false, props)?;

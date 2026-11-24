@@ -1,0 +1,201 @@
+diff --git a/crates/victory-gpu/src/copystat.rs b/crates/victory-gpu/src/copystat.rs
+index 8b7d13df1e80af4c3f608313a11501f3b715d343..1ef8de5f12496c755313d497b53be06df3e33047 100644
+--- a/crates/victory-gpu/src/copystat.rs
++++ b/crates/victory-gpu/src/copystat.rs
+@@ -42,6 +42,11 @@ const COUNTERS: usize = 22;
+ static COUNT: [AtomicU64; COUNTERS] = [const { AtomicU64::new(0) }; COUNTERS];
+ 
+ pub(crate) fn add(c: C, n: u64) {
++    match c {
++        C::Checked => event(Event::Checked, n),
++        C::Unchanged => event(Event::Unchanged, n),
++        _ => {}
++    }
+     COUNT[c as usize].fetch_add(n, Relaxed);
+ }
+ 
+@@ -145,3 +150,24 @@ pub(crate) fn log(frames: f64) {
+         );
+     }
+ }
++
++/// Monotonic counters: samples at successful presents are independent of
++/// the variable averaging interval of the FPS display.
++#[derive(Clone, Copy)]
++pub(crate) enum Event {
++    Checked, Unchanged, ReadbackChecked, DifferentBytes, UnknownBytes,
++    Written, FenceUs, FreshTables, PlansUs, RecordsUs, UploadCommands, Dropped,
++}
++static TOTAL: [AtomicU64; 12] = [const { AtomicU64::new(0) }; 12];
++
++pub(crate) fn event(kind: Event, value: u64) {
++    TOTAL[kind as usize].fetch_add(value, Relaxed);
++}
++
++pub(crate) fn scene_present(frame: u64) {
++    static SAMPLES: AtomicU64 = AtomicU64::new(0);
++    if SAMPLES.fetch_add(1, Relaxed) < 100 {
++        let counts = TOTAL.each_ref().map(|c| c.load(Relaxed));
++        tracing::info!(frame, ?counts, "upload comparison present");
++    }
++}
+diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
+index d2f62eeb2c59a1cd00f3c3162b9f96bf8beea679..20227cd125353d1eb7313a212e28e6824d916459 100644
+--- a/crates/victory-gpu/src/descriptor/host.rs
++++ b/crates/victory-gpu/src/descriptor/host.rs
+@@ -1245,6 +1245,8 @@ impl HostHeap {
+         }
+         let us = started.elapsed().as_micros() as u64;
+         self.budget_spend(1, us);
++        #[cfg(feature = "diagnostics")]
++        crate::copystat::event(crate::copystat::Event::RecordsUs, us);
+         crate::host::BINDLESS_US[1].fetch_add(us, Ordering::Relaxed);
+     }
+ 
+diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
+index 46f2ca144bef486bf1827fbe79b2f33514b97b4b..513424bb0dd593b99841b9d7d7d2293d81a786fb 100644
+--- a/crates/victory-gpu/src/draw.rs
++++ b/crates/victory-gpu/src/draw.rs
+@@ -525,6 +525,8 @@ impl State {
+                 pipeline = format_args!("{:#x}", self.pipeline),
+                 "a dispatch without a host pipeline dropped"
+             );
++            #[cfg(feature = "diagnostics")]
++            crate::copystat::event(crate::copystat::Event::Dropped, 1);
+             DROPPED.fetch_add(1, Ordering::Relaxed);
+             return;
+         };
+@@ -599,6 +601,8 @@ impl State {
+                 Err(_) => false,
+             };
+         if !ran {
++            #[cfg(feature = "diagnostics")]
++            crate::copystat::event(crate::copystat::Event::Dropped, 1);
+             DROPPED.fetch_add(1, Ordering::Relaxed);
+             #[cfg(feature = "diagnostics")]
+             dropped();
+@@ -721,6 +725,8 @@ impl State {
+             let Some(first) = host.dynamic(n) else {
+                 continue;
+             };
++            #[cfg(feature = "diagnostics")]
++            crate::copystat::event(crate::copystat::Event::FreshTables, 1);
+             self.fresh_tables.insert(key, first);
+             self.dynamic
+                 .push((std::ptr::from_ref(heap) as usize, first, n));
+@@ -852,6 +858,8 @@ impl State {
+             DRAWN.fetch_add(1, Ordering::Relaxed);
+         }
+         if !ran {
++            #[cfg(feature = "diagnostics")]
++            crate::copystat::event(crate::copystat::Event::Dropped, 1);
+             DROPPED.fetch_add(1, Ordering::Relaxed);
+             #[cfg(feature = "diagnostics")]
+             dropped();
+@@ -939,6 +947,8 @@ impl State {
+             DRAWN.fetch_add(1, Ordering::Relaxed);
+         }
+         if !ran {
++            #[cfg(feature = "diagnostics")]
++            crate::copystat::event(crate::copystat::Event::Dropped, 1);
+             DROPPED.fetch_add(1, Ordering::Relaxed);
+             #[cfg(feature = "diagnostics")]
+             dropped();
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+index 728306c920462f00b543a684d21964e8acb4b9ba..7a5989c36a943d4990be8478405190fb73d5f672 100644
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -543,6 +543,8 @@ impl Host {
+                 .map(|()| WaitForSingleObject(self.event, INFINITE))
+         };
+         let gpu = prepared.elapsed();
++        #[cfg(feature = "diagnostics")]
++        crate::copystat::event(crate::copystat::Event::FenceUs, gpu.as_micros() as u64);
+         SUBMISSION_US[0].fetch_add((prepared - started).as_micros() as u64, Ordering::Relaxed);
+         SUBMISSION_US[1].fetch_add(gpu.as_micros() as u64, Ordering::Relaxed);
+         // The host resets a device whose submission runs for about 2 s.
+@@ -596,6 +598,8 @@ impl Host {
+         for (shadow, address, len) in &back {
+             let (address, len) = (*address, *len);
+             let written = shadow.copy_back(address, len);
++            #[cfg(feature = "diagnostics")]
++            crate::copystat::event(crate::copystat::Event::Written, written as u64);
+             COPY_BACK[1].fetch_add(written as u64, Ordering::Relaxed);
+         }
+         COPY_BACK[0].fetch_add(copying.elapsed().as_micros() as u64, Ordering::Relaxed);
+@@ -1310,7 +1314,10 @@ impl Batch {
+         for (heap, writes) in std::mem::take(&mut self.bindless) {
+             let started = std::time::Instant::now();
+             let plan = heap.bindless_plan();
+-            BINDLESS_US[0].fetch_add(started.elapsed().as_micros() as u64, Ordering::Relaxed);
++            let us = started.elapsed().as_micros() as u64;
++            #[cfg(feature = "diagnostics")]
++            crate::copystat::event(crate::copystat::Event::PlansUs, us);
++            BINDLESS_US[0].fetch_add(us, Ordering::Relaxed);
+             let Some(plan) = plan else {
+                 continue;
+             };
+diff --git a/crates/victory-gpu/src/queue.rs b/crates/victory-gpu/src/queue.rs
+index 8dce96c37dbddc61f59ea8a2e1147744fba30254..8af078e394f141a766c63cd58ae0eb71a0835dcf 100644
+--- a/crates/victory-gpu/src/queue.rs
++++ b/crates/victory-gpu/src/queue.rs
+@@ -293,7 +293,9 @@ extern "system" fn present(
+         static FIRST: std::sync::Once = std::sync::Once::new();
+         FIRST.call_once(|| tracing::info!(frame, "presenting the scene render target"));
+         let state = crate::host::legal_state(&target.texture, target.state.load(Ordering::Relaxed));
+-        host.present(&target.texture, state, frame, frame_meshes);
++        if host.present(&target.texture, state, frame, frame_meshes).is_some() {
++            crate::copystat::scene_present(frame);
++        }
+         return S_OK;
+     }
+     #[cfg(windows)]
+diff --git a/crates/victory-gpu/src/shadow.rs b/crates/victory-gpu/src/shadow.rs
+index f8d9193e3b90cc960dd02101f76b56793009990b..106e11a2d287d5c63bc7ec6b26c65009cfd794d5 100644
+--- a/crates/victory-gpu/src/shadow.rs
++++ b/crates/victory-gpu/src/shadow.rs
+@@ -130,7 +130,17 @@ impl Shadow {
+                 let n = (PIECE - at % PIECE).min(to - at);
+                 // SAFETY: inside the mapping.
+                 let host = unsafe { std::slice::from_raw_parts(self.data.add(at - start), n) };
+-                if !crate::host::read_into(at as *const u8, &mut title[..n]) || title[..n] != *host {
++                let readable = crate::host::read_into(at as *const u8, &mut title[..n]);
++                #[cfg(feature = "diagnostics")]
++                crate::copystat::event(crate::copystat::Event::ReadbackChecked, n as u64);
++                if !readable || title[..n] != *host {
++                    #[cfg(feature = "diagnostics")]
++                    if readable {
++                        let changed = title[..n].iter().zip(host).filter(|(a,b)| a != b).count();
++                        crate::copystat::event(crate::copystat::Event::DifferentBytes, changed as u64);
++                    } else {
++                        crate::copystat::event(crate::copystat::Event::UnknownBytes, n as u64);
++                    }
+                     crate::watch::writing(at, n);
+                     crate::host::write_mapped(at as *mut u8, host.as_ptr(), n);
+                     written += n;
+diff --git a/crates/victory-gpu/src/texture.rs b/crates/victory-gpu/src/texture.rs
+index 8914e94833df2a2f80170407fa5a77efe462caaf..4e6287c8427bb8fd427d0968ea4b90f0911e02d7 100644
+--- a/crates/victory-gpu/src/texture.rs
++++ b/crates/victory-gpu/src/texture.rs
+@@ -140,6 +140,12 @@ impl Staging {
+         let preparing = &crate::host::PREPARING;
+         preparing[2].fetch_add(started.elapsed().as_micros() as u64, Relaxed);
+         preparing[3].fetch_add(read as u64, Relaxed);
++        // A/B control: resend initialized staging after the same refresh check.
++        static RESEND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++        if !dirty && *RESEND.get_or_init(|| std::env::var_os("VICTORY_RESEND_CLEAN").is_some()) {
++            let last = self.last.lock().unwrap_or_else(|e| e.into_inner());
++            return last.asked != 0 || last.hash.is_some();
++        }
+         dirty
+     }
+ 
+@@ -191,6 +197,8 @@ impl Staging {
+     /// Records `CopyTextureRegion` for every subresource from this staging
+     /// buffer into `texture` (which must already be in `COPY_DEST`).
+     pub(crate) fn record_copies(&self, list: &ID3D12GraphicsCommandList, texture: &ID3D12Resource) {
++        #[cfg(feature = "diagnostics")]
++        crate::copystat::event(crate::copystat::Event::UploadCommands, self.footprints.len() as u64);
+         for (i, footprint) in self.footprints.iter().enumerate() {
+             let to = D3D12_TEXTURE_COPY_LOCATION {
+                 // SAFETY: a borrowed pointer the location never releases.

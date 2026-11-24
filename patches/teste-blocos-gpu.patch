@@ -1,0 +1,66 @@
+diff --git a/crates/victory-shader/src/emit/host.rs b/crates/victory-shader/src/emit/host.rs
+index dabd4a4dc5dade16fceaee16e8844d087018b12f..44fa1294e2265d026e587bfd353a71d23d38f2ff 100644
+--- a/crates/victory-shader/src/emit/host.rs
++++ b/crates/victory-shader/src/emit/host.rs
+@@ -1379,3 +1379,61 @@ impl Host {
+         }
+     }
+ }
++
++#[cfg(test)]
++#[test]
++#[ignore = "requires compiled VICTORY_DIRTY_MASK_DXIL and a hardware D3D12 adapter"]
++fn dirty_mask_matches_cpu_byte_reference() {
++    let dxil = std::fs::read(std::env::var_os("VICTORY_DIRTY_MASK_DXIL").expect("DXIL path"))
++        .expect("read compiled mask shader");
++    let host = Host::new(false).expect("hardware D3D12 device");
++    // SAFETY: query the DXGI adapter matching this live D3D12 device.
++    let desc = unsafe {
++        let factory: IDXGIFactory4 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).unwrap();
++        let adapter: IDXGIAdapter1 = factory.EnumAdapterByLuid(host.device.GetAdapterLuid()).unwrap();
++        adapter.GetDesc1().unwrap()
++    };
++    assert_eq!(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32, 0);
++    let name = desc.Description.split(|&c| c == 0).next().unwrap();
++    eprintln!("D3D12 adapter: {}", String::from_utf16_lossy(name));
++    let root = host.root_signature_for(&[]).unwrap();
++    let pso = host.compute_pipeline_with(&root, &dxil).unwrap();
++    for size in [1usize, 1024, 1025, 32 * 1024, 65 * 1024 + 1] {
++        for mode in 0..3 {
++            let before: Vec<u32> = (0..size.div_ceil(4)).map(|i| i as u32 ^ 0xabc0_1234).collect();
++            let mut after = before.clone();
++            let mut flip = |byte: usize| after[byte / 4] ^= 0x80 << (8 * (byte % 4));
++            match mode {
++                0 => {} // equal
++                1 => {
++                    for byte in [0, size / 2, size - 1] { flip(byte); }
++                }
++                _ => {
++                    for byte in (0..size).step_by(1024) { flip(byte); }
++                }
++            }
++            // Padding is outside the logical range. A mismatch there must be ignored.
++            if size % 4 != 0 { after[size / 4] ^= 0x80 << (8 * (size % 4)); }
++            let groups = size.div_ceil(1024);
++            let mut expected = vec![0u32; groups.div_ceil(32)];
++            for byte in 0..size {
++                let bits = 0xff << (8 * (byte % 4));
++                if ((before[byte / 4] ^ after[byte / 4]) & bits) != 0 {
++                    let block = byte / 1024;
++                    expected[block / 32] |= 1 << (block % 32);
++                }
++            }
++            let length = [size as u32];
++            let views = [
++                View::Buffer { data: &before, stride: Stride::Raw },
++                View::Buffer { data: &after, stride: Stride::Raw },
++                View::RawUav(expected.len() as u32),
++                View::Buffer { data: &length, stride: Stride::Raw },
++            ];
++            let out = host.dispatch(&root, &pso, &Dispatch {
++                roots: Vec::new(), views: &views, samplers: &[], groups: [groups as u32, 1, 1],
++            }).unwrap();
++            assert_eq!(out[0], expected, "size={size}, mode={mode}");
++        }
++    }
++}

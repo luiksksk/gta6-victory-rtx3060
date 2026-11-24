@@ -1,0 +1,31 @@
+diff --git a/crates/victory-shader/src/emit/wave64_tests.rs b/crates/victory-shader/src/emit/wave64_tests.rs
+index a92361dd62c2159a09e55e96df7bd20e8e1efd8a..0c4105f1c3bba7e1dc1eab1a6cfb6cdc57e81540 100644
+--- a/crates/victory-shader/src/emit/wave64_tests.rs
++++ b/crates/victory-shader/src/emit/wave64_tests.rs
+@@ -774,7 +774,13 @@ mod gpu {
+         let _one = super::super::valu_tests::ONE_AT_A_TIME
+             .lock()
+             .unwrap_or_else(|e| e.into_inner());
+-        let lock = HOSTS.get_or_init(|| Mutex::new([Host::new(false).ok(), Host::new(true).ok()]));
++        let lock = HOSTS.get_or_init(|| {
++            let hw = Host::new(false).expect("D3D12 hardware");
++            let lanes = hw.wave_lanes();
++            eprintln!("hardware WaveOps/min/max: {lanes:?}");
++            assert_eq!(lanes, (true, 32, 32));
++            Mutex::new([Some(hw), None])
++        });
+         let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+         f(&guard);
+     }
+@@ -807,9 +813,9 @@ mod gpu {
+                 for mode in modes {
+                     let shader = emit_cs(prog, mode)
+                         .unwrap_or_else(|e| panic!("{name} ({mode:?}, warp={warp}): {e}"));
+-                    if let Ok(mut v) = super::super::validator::Validator::load(
++                    { let mut v = super::super::validator::Validator::load(
+                         super::super::validator::Validator::default_path().as_deref(),
+-                    ) {
++                    ).expect("DXIL validator");
+                         v.validate(&mut shader.dxil.clone())
+                             .unwrap_or_else(|e| panic!("{name} ({mode:?}) validate: {e}"));
+                     }

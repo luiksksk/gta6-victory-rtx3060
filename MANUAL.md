@@ -2,6 +2,8 @@
 
 Este guia é para quem já tem a **instalação completa de GTA VI para Xbox**. O teste foi feito com a versão 1.0.2.1 e uma RTX 3060 de 12 GB. Você vai compilar o VIctory no seu computador e indicar onde o jogo está instalado. **O estado atual é experimental.** Já foi possível entrar na primeira missão e ouvir o áudio. Depois de “Vice City, dois anos atrás”, personagens e cenário ainda ficam escuros.
 
+Para investigar o menu invisível, usar a saída nativa e conferir quais shaders chegaram à GPU, veja os ensaios da variante SondaMateriais. [Pausa, materiais e issues](docs/pausa-e-materiais.md).
+
 ## 1. Prepare o computador
 
 Use Windows 10 ou 11 de 64 bits, processador com AVX2 e placa Direct3D 12 com Shader Model 6.6 e mesh shaders. Localize a pasta que contém `game_scarlett_master.exe` junto dos demais arquivos da sua instalação. Anote o caminho dessa pasta.

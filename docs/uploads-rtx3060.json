@@ -1,0 +1,58 @@
+{
+  "upload-todos-x": {
+    "primeiro_frame": 3429,
+    "ultimo_frame_na_janela": 3441,
+    "intervalos_entre_apresentacoes": 12,
+    "segundos_dos_contadores": 9.336387872695923,
+    "ms_entre_apresentacoes": 778.0323227246603,
+    "cpu_total_pct": 17.458739379448716,
+    "motor_3d_pct": 24.52707469717769,
+    "motor_copia_pct": 0.02031999999999999,
+    "contadores": {
+      "bytes_verificados": 92794470772,
+      "bytes_iguais": 91987712568,
+      "bytes_readback_comparados": 6105679304,
+      "bytes_readback_diferentes": 4677047,
+      "bytes_sem_baseline": 0,
+      "bytes_escritos": 19609288,
+      "espera_fence_us": 1758457,
+      "tabelas_novas": 5613,
+      "preparo_planos_us": 1789221,
+      "preparo_descritores_us": 1398772,
+      "copias_textura": 19599,
+      "descartes": 7645
+    },
+    "exe_sha256": "890975d71cc2934f56f522b2335184370a274b8831fe7cc5f85fc3bdcf9e494e",
+    "inicio": "2026-11-24T13:08:57.020472-03:00",
+    "segundos_execucao": 217.222,
+    "codigo_final": "0xc0000005"
+  },
+  "upload-alterados-x": {
+    "primeiro_frame": 3231,
+    "ultimo_frame_na_janela": 3242,
+    "intervalos_entre_apresentacoes": 10,
+    "segundos_dos_contadores": 9.788059949874878,
+    "ms_entre_apresentacoes": 978.8059949874878,
+    "cpu_total_pct": 10.521296877423403,
+    "motor_3d_pct": 13.815487496597179,
+    "motor_copia_pct": 0.002105999999999983,
+    "contadores": {
+      "bytes_verificados": 106638237936,
+      "bytes_iguais": 105837756360,
+      "bytes_readback_comparados": 5850677776,
+      "bytes_readback_diferentes": 3473111,
+      "bytes_sem_baseline": 0,
+      "bytes_escritos": 22783640,
+      "espera_fence_us": 1354656,
+      "tabelas_novas": 11600,
+      "preparo_planos_us": 1910968,
+      "preparo_descritores_us": 1234368,
+      "copias_textura": 4112,
+      "descartes": 23580
+    },
+    "exe_sha256": "890975d71cc2934f56f522b2335184370a274b8831fe7cc5f85fc3bdcf9e494e",
+    "inicio": "2026-11-24T13:13:23.576642-03:00",
+    "segundos_execucao": 193.13,
+    "codigo_final": "0x887a0005"
+  }
+}

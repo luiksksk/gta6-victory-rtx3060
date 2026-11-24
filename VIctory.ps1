@@ -3,7 +3,7 @@
 param(
     [ValidateSet('Compilar','Executar','Config','PrepararShaders')]
     [string]$Acao = 'Executar',
-    [ValidateSet('Execucao','Diagnostico','SondaHDR','Geometria','CoresPlanas','Materiais')]
+    [ValidateSet('Execucao','Diagnostico','SondaHDR','Geometria','CoresPlanas','Materiais','SondaMateriais')]
     [string]$Variante = 'Execucao',
     [string]$PastaJogo,
     [string]$PerfilOrigem,
@@ -14,12 +14,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $base = '015d45bfff4d82e7afad89afe10dd24e5a402ef8'
 $arvores = @{
-    Execucao = '242c34f77aa8990cc66ac8fdfca43085c2c0fa69'
+    Execucao = '7e07f9a9909dc82adcd715ef4d48e60c741e687c'
     Diagnostico = 'b080813ecbfda50f7921dce366063b3a2ff974b2'
     SondaHDR = 'e3a6fc73fdd78b4d0d8a1e74d979f029b60e40a8'
     Geometria = '85ae3d3dc2cb0770950a3c5cccaf78d694af3f98'
     CoresPlanas = '9d796cbc1f369c9101d3e0123eb27dde574f1190'
     Materiais = '6fc6ceb882461675a417fe9160a194aea8df43ea'
+    SondaMateriais = '6ab5a7b4bd2232faf908b036eaef18449990e8f4'
 }
 # PowerShell accepts case-insensitive parameter values. Keep paths canonical.
 $tipo = switch ($Variante) {
@@ -28,10 +29,11 @@ $tipo = switch ($Variante) {
     'Geometria' { 'Geometria' }
     'CoresPlanas' { 'CoresPlanas' }
     'Materiais' { 'Materiais' }
+    'SondaMateriais' { 'SondaMateriais' }
     default { 'Execucao' }
 }
 if ($tipo -eq 'SondaHDR') { $base = '35b054ec038c11bc8a0de66b1eee764b1ad4f101' }
-if ($tipo -in @('Geometria','CoresPlanas','Materiais')) { $base = '97c78d1087808bd6ce5eabb5d566083a38406a90' }
+if ($tipo -in @('Geometria','CoresPlanas','Materiais','SondaMateriais')) { $base = '97c78d1087808bd6ce5eabb5d566083a38406a90' }
 $arvore = $arvores[$tipo]
 $raiz = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'VIctory-RTX3060-Publico'
 $fontes = Join-Path $raiz 'fontes'
@@ -70,7 +72,7 @@ function Get-PatchedSource {
             Invoke-Git @('-C',$tmp,'checkout','--quiet','--detach','FETCH_HEAD')
             $patches = switch ($tipo) {
                 'Geometria' { 'geometria-97c78d10.patch' }
-                { $_ -in @('CoresPlanas','Materiais') } { 'geometria-97c78d10.patch'; 'cores-planas.patch' }
+                { $_ -in @('CoresPlanas','Materiais','SondaMateriais') } { 'geometria-97c78d10.patch'; 'cores-planas.patch' }
                 'SondaHDR' { 'sonda-hdr-35b054ec.patch' }
                 'Diagnostico' { 'execucao-rtx3060.patch'; 'diagnostico-cena.patch' }
                 default { 'execucao-rtx3060.patch' }
@@ -83,9 +85,20 @@ function Get-PatchedSource {
             # insertion is anchored on the function signature and verified below.
             $preparo = Join-Path (Join-Path $PSScriptRoot 'patches') 'preparacao-shaders.patch'
             Invoke-Git @('-C',$tmp,'apply','--index','--unidiff-zero','--whitespace=error-all',$preparo)
-            if ($tipo -eq 'Materiais') {
+            if ($tipo -in @('Materiais','SondaMateriais')) {
                 $materiais = Join-Path (Join-Path $PSScriptRoot 'patches') 'materiais-wave32.patch'
                 Invoke-Git @('-C',$tmp,'apply','--index','--whitespace=error-all',$materiais)
+            }
+            if ($tipo -eq 'SondaMateriais') {
+                $tradutor = 'd1fecaa1ef231f8ad24736d58e9d8e1e149938bd'
+                Invoke-Git @('-C',$tmp,'fetch','--quiet','--depth=1','https://github.com/Marvisak/VIctory.git',$tradutor)
+                Invoke-Git @('-C',$tmp,'read-tree','--prefix=crates/victory-shader-descritor/','-u',("${tradutor}:crates/victory-shader"))
+                $sonda = Join-Path (Join-Path $PSScriptRoot 'patches') 'sonda-materiais-233.patch'
+                Invoke-Git @('-C',$tmp,'apply','--index','--whitespace=error-all',$sonda)
+            }
+            if ($tipo -in @('Execucao','SondaMateriais')) {
+                $clwb = Join-Path (Join-Path $PSScriptRoot 'patches') 'loader-clwb.patch'
+                Invoke-Git @('-C',$tmp,'apply','--index','--whitespace=error-all',$clwb)
             }
             if ((Invoke-Git @('-C',$tmp,'write-tree')) -ne $arvore) {
                 throw 'A fonte preparada divergiu da versao testada.'
@@ -145,7 +158,7 @@ if ($Acao -eq 'Compilar') {
     Push-Location -LiteralPath $fonte
     $dxcAnterior = $env:VICTORY_GEOMETRIA_DXC
     try {
-        if ($tipo -in @('CoresPlanas','Materiais') -and !$dxcAnterior) {
+        if ($tipo -in @('CoresPlanas','Materiais','SondaMateriais') -and !$dxcAnterior) {
             $dxc = Get-Command dxc.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($dxc) { $env:VICTORY_GEOMETRIA_DXC = $dxc.Source }
             else {
@@ -194,10 +207,10 @@ if ($tipo -eq 'Execucao') {
     $config['VICTORY_LIVE_KEYS'] = $null
 }
 $anterior = @{}
-if ($tipo -in @('Geometria','CoresPlanas','Materiais')) {
+if ($tipo -in @('Geometria','CoresPlanas','Materiais','SondaMateriais')) {
     $config['VICTORY_LOW_VA_MIB'] = '512'
     $config['VICTORY_PREWARM_LOG'] = Join-Path (Join-Path $PSScriptRoot 'docs') 'pipelines-geometria.txt'
-    $config['VICTORY_PRESENT_TARGET'] = if ($env:VICTORY_PRESENT_TARGET) { $env:VICTORY_PRESENT_TARGET } else { '2560x1440:28:0' }
+    $config['VICTORY_PRESENT_TARGET'] = if ($env:VICTORY_PRESENT_TARGET -eq 'nativo') { $null } elseif ($env:VICTORY_PRESENT_TARGET) { $env:VICTORY_PRESENT_TARGET } else { '2560x1440:28:0' }
     $config['VICTORY_EXPAND_SCENE_HDR'] = '1'
     $config['VICTORY_INDIRECT'] = '1'
     $config['VICTORY_INDIRECT_AFTER_MESH_FRAMES'] = '90'
@@ -208,7 +221,7 @@ if ($tipo -eq 'CoresPlanas') {
     $config['VICTORY_INDIRECT'] = $null
     $config['VICTORY_SHADER_LOOP_LIMIT'] = '32'
 }
-if ($tipo -eq 'Materiais') {
+if ($tipo -in @('Materiais','SondaMateriais')) {
     $config['VICTORY_FLAT_GEOMETRY'] = $null
     $config['VICTORY_SINGLE_LIST'] = $null
     $config['VICTORY_SHADER_LOOP_LIMIT'] = '32'
