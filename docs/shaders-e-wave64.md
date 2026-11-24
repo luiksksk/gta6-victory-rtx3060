@@ -22,7 +22,7 @@ Há ainda uma falha medida fora dessa lista. A passagem HDR `731a39171b568298` j
 
 ## O que são 2400, 2401 e 2402?
 
-O VIctory registra o hash do conteúdo. O número de ordem depende da ferramenta, da versão do jogo e do tratamento de duplicatas. Estas são duas contagens começando em **1**, verificadas em `shaders.rpf` da v1.0.2.1.
+O VIctory registra o hash do conteúdo. O número de ordem depende da ferramenta, da versão do jogo e do tratamento de duplicatas. Estas são duas contagens começando em **1**, verificadas em `shaders.rpf` da v1.0.2.1. A primeira conta cada conteúdo distinto uma vez. A segunda conta os registros SGD5 reconhecidos na ordem do arquivo, incluindo repetições.
 
 | Ordem dos shaders únicos | Registro no arquivo | Hash | Resultado isolado na RTX 3060 |
 | ---: | ---: | --- | --- |
@@ -41,6 +41,8 @@ No caminho de dados dos dois shaders, uma junção de fluxo alimenta a máscara 
 
 ## Até onde vai o problema de Wave64?
 
+Os testes isolados usaram o driver NVIDIA `621.24` e a biblioteca `dxil.dll` versão `1.9.2602.17`, do Windows SDK `10.0.26100.0`.
+
 Na consulta `D3D12_FEATURE_D3D12_OPTIONS1`, a RTX 3060 deste teste informou `WaveLaneCountMin = 32` e `WaveLaneCountMax = 32`. O shader pode usar 64 lanes no Xbox e ainda gerar DXIL executável com 32 quando o resultado independe da largura. Quando o DXIL exige explicitamente 64, o dispositivo precisa oferecer essa largura. [Consulta de recursos do Direct3D 12](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_feature_data_d3d12_options1) · [Especificação WaveSize da Microsoft](https://microsoft.github.io/DirectX-Specs/d3d/HLSL_SM_6_6_WaveSize.html)
 
 | Variante padrão, instalação v1.0.2.1 | Shaders distintos |
@@ -53,7 +55,21 @@ Na consulta `D3D12_FEATURE_D3D12_OPTIONS1`, a RTX 3060 deste teste informou `Wav
 
 Testamos **cada um dos 321** no validador DXIL da Microsoft e na criação de pipeline de compute no dispositivo físico. O driver recusou todos. O validador aceitou 315 e apontou também incompatibilidades de estágio ou de propriedades de entrada em seis. Ao repetir a tradução com o caminho da variante `Diagnostico` para adaptadores de 32 lanes, **25 passaram a criar pipeline e 296 continuaram recusados**. A adaptação cobre algumas trocas de dados em grupos de 64 threads, usando memória compartilhada e barreiras. A criação do pipeline confirma que o driver o aceitou. A imagem e os valores de saída dependem de um teste de execução.
 
-Dos 321, **114** apareceram em mensagens explícitas de recusa do driver ao longo da sessão completa da sonda. Entre os **11** presentes nos descartes nomeados nos 30 segundos da missão, apenas `13dfdd3b1136e407`, de geração de mipmaps, passou com a adaptação de diagnóstico.
+Dos 321, **114** apareceram em mensagens explícitas de recusa do driver ao longo da sessão completa da sonda. Dos **24** ligados a erros ou descartes nos 30 segundos da missão, **só o shader de geração de mipmaps `13dfdd3b1136e407`** passou com a adaptação de diagnóstico. Ele também está entre os 11 Wave64 diretamente citados em descartes naquele trecho.
+
+## Teste de todos os shaders traduzidos
+
+Testamos também os **22.160 DXILs** da variante padrão no validador do Windows SDK e na criação de pipeline na RTX 3060. Para compute, usamos o shader com sua assinatura de recursos. Para vértices, malha e pixels, usamos um estágio complementar mínimo. O teste preservou o DXIL do cache ao solicitar o pipeline ao driver. A validação ocorreu em uma cópia separada.
+
+| Estágio | Traduzidos | Aceitos pelo validador DXIL | Pipeline criado na RTX 3060 |
+| --- | ---: | ---: | ---: |
+| Vértices | 2.130 | 2.098 | 2.130 |
+| Malha | 8.191 | 8.129 | 8.191 |
+| Pixels | 10.154 | 10.086 | 10.154 |
+| Compute | 1.685 | 1.662 | 1.364 |
+| **Total** | **22.160** | **21.975** | **21.839** |
+
+**Todos os 321 pipelines recusados exigiam Wave64.** A placa criou pipeline para os outros 21.839 shaders nas combinações isoladas. Entre eles, **179 receberam erro do validador DXIL**, incluindo assinaturas incompatíveis e limites de saída de malha. Outros seis shaders foram recusados pelo validador e pelo driver. Ao todo, **21.660 passaram nas duas verificações**. O CSV reúne os 500 hashes que falharam em pelo menos uma delas. O resultado isolado mede a aceitação do pipeline e a conformidade do DXIL. A correção dos pixels nas combinações de materiais da missão continua dependente dos recursos e dos argumentos de execução. [Resultados por hash](shaders-validacao-e-pipelines.csv)
 
 ## Como ler o catálogo
 
@@ -69,3 +85,18 @@ A lista completa reúne **4.146 impedimentos conhecidos na variante padrão**, c
 Na entrada normal `run --execute`, o build padrão percorreu todos os percentuais de 0 a 100. Os 25.985 shaders foram processados em **135,86 s** com cache frio. O executável do título foi mapeado depois de 100%, e a janela do jogo apareceu aos **138,67 s**. O teste foi encerrado normalmente pelo laboratório após capturar os primeiros quadros. Na preparação seguinte, o lançador levou **4,41 s** e preservou os 25.985 arquivos do cache sem reescrevê-los. Com `shaders.rpf` ausente, a preparação encerrou com código 1 antes de mapear o título.
 
 Build de execução testado, SHA-256 `196446f7dbcea5ff7d1f361453bb9ddef62eca5a59bc87016996a36628a74144`. A compilação é local, a partir do código e dos patches publicados. [Manual de instalação e uso](../MANUAL.md)
+
+## Repetir testes de pipeline na sua placa
+
+Depois de compilar a variante padrão, o subcomando `translate` do VIctory pode testar os programas dos arquivos da sua instalação. O comando abaixo usa o validador do Windows SDK e solicita ao driver um pipeline de teste para cada shader traduzido. O relatório fica na pasta atual. Informe seu caminho de instalação em `$jogo`.
+
+```powershell
+$jogo = 'D:\Jogos\GTA VI'
+$victory = Join-Path $env:LOCALAPPDATA 'VIctory-RTX3060-Publico\build\242c34f77aa8990cc66ac8fdfca43085c2c0fa69\diag\victory.exe'
+$arquivos = @((Join-Path $jogo 'shaders.rpf'), (Join-Path $jogo 'game_scarlett_master.exe'))
+$arquivos += @(Get-ChildItem -LiteralPath $jogo -Filter '*.dll' -File | ForEach-Object FullName)
+$relatorio = 'pipelines-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log'
+& $victory translate --validate --pipelines --list --jobs 4 @arquivos *> $relatorio
+```
+
+O subcomando agrupa programas nativos e escreve rótulos por arquivo. Para comparar esta auditoria com o log de uma missão, os CSVs usam o hash do contêiner completo mostrado pelo jogo.

@@ -34,6 +34,8 @@ Ao iniciar, o lançador aguarda a pré-compilação dos shaders identificáveis 
 
 Nos 30 segundos após a legenda de localização, os erros e descartes da primeira missão citaram 239 shaders por hash. Para 76 deles, o relatório registrou chamadas descartadas por quadro. A investigação também identificou a que correspondem os números 2400, 2401 e 2402 nas duas contagens do arquivo. [Resultados na RTX 3060](docs/shaders-e-wave64.md) · [Lista dos 239 shaders](docs/shaders-eventos-30s.csv)
 
+Dos 22.160 shaders traduzidos, 21.839 criaram pipeline em testes isolados na placa. Os 321 recusados exigiam Wave64. O validador do Windows SDK também encontrou erros em 179 shaders aceitos pelo driver. [Teste por estágio e por hash](docs/shaders-e-wave64.md#teste-de-todos-os-shaders-traduzidos)
+
 Aponte o lançador para a pasta que contém `game_scarlett_master.exe`. O caminho abaixo é um exemplo.
 
 ```powershell

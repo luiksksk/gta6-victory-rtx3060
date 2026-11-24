@@ -1,0 +1,501 @@
+hash,estagio,ordem_distintos,largura_dxil,validador_dxil,diagnostico_validador,pso_isolado,citado_em_descarte_missao_30s
+3d002bca51069e01,Cs,21559,64,aceito,,recusado,1
+f753697c1c03772b,Cs,21560,64,aceito,,recusado,1
+a1f6cdf8874960a9,Cs,21862,64,aceito,,recusado,1
+660814153af43185,Cs,21923,64,aceito,,recusado,1
+f8f50ab85e7b10bb,Cs,21927,64,aceito,,recusado,1
+647443e8b7b68415,Cs,22147,64,aceito,,recusado,1
+c9da71da40af2e28,Cs,22553,64,aceito,,recusado,1
+cabb87599722e59a,Cs,22562,64,recusado,operação incompatível com o estágio ou com as propriedades da entrada,recusado,1
+8dd8d739047fe557,Cs,22786,64,aceito,,recusado,1
+a25ed0e3d4d521ba,Cs,24176,64,aceito,,recusado,1
+13dfdd3b1136e407,Cs,25879,64,aceito,,recusado,1
+443890ea4e874255,Ms,731,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+f5267481806849cf,Ms,732,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+7395d878fd0f7d58,Ms,733,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+2745491a48f2c531,Ms,734,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+e621777f653d487c,Ms,735,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+e7f6ba5d1754ea8c,Ms,2167,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+cae2477d493c3988,Ms,2170,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+be7cb028c31b0895,Ms,2171,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+be95f8efecafdd27,Vs,2212,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+f28ab4812b4d0595,Ms,2317,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+0591d784444976c4,Ms,2320,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+d3d6790dd880471a,Ms,2321,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+1c4341525e0dfa4a,Ms,2354,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+7e8580492e7a51fe,Ms,2357,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+b903c805595a3f9b,Ms,2358,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+ebe1bce99c0003b7,Vs,2494,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+a2be9bb640eae61e,Vs,2520,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+991ccbe05a28727f,Vs,2521,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+2226ea8e216c84c5,Vs,2554,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+8921ce26b5ec9a83,Vs,2555,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+5fd6ab0653f0f0b7,Ms,2725,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+df0816d7d5f1f1a2,Ms,2728,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+92775547a2dfd4e7,Ms,2729,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+3c24964d207ca74f,Ms,2762,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+052e365ca656d85f,Ms,2765,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+c53c69116e9f28fc,Ms,2766,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+e683b72d0c42cde0,Vs,4285,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+2c204b1303f8eb38,Vs,4289,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+343dca27f177ae98,Vs,4738,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+40a9652705d2f0d1,Vs,4741,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+798f5703aae02d86,Vs,4788,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+fe2e0acfbb3a6733,Vs,4791,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+ccb6c4af4a20cc91,Vs,7456,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+d244e1a14ee9b974,Vs,7460,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+72da0ba1efaec1e0,Ms,8153,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+2475023fb5517763,Ms,8155,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+4a2ebf94d9636f16,Ms,8157,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+afd3e04650b44596,Ms,8158,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+b76a0e6a2437533b,Ms,8161,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+a2385475e4e9db47,Ms,8162,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+a7e6f56e963ae8d6,Ms,8165,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+495c54f177c3b1f8,Ms,8166,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+4df2585254ccaa8e,Ms,8173,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+3c2a9ba9910ad06f,Ms,8175,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+43b0a93b0ee4bdbb,Ms,8176,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+d1d99349b4023e2d,Ms,8745,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+f52e4df6223ae211,Ms,8766,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+65a8492e36da5e10,Ms,8767,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+238e43d59a4091eb,Ms,8799,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+37f607ca9a3b43e6,Ms,8820,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+32e2f32c29605087,Ms,8821,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+188297e431dd761f,Ms,8948,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+8f614d281ed88b49,Ms,8969,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+312d162de79f8ba1,Ms,8970,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+7984977f257b22a1,Ms,9010,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+0d5757a32bf46266,Ms,9012,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+7e7678e63808f549,Ms,9014,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+c614008f566cb2a4,Ms,9040,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+f43803ebbb7e0681,Ms,9042,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+bb4ed3cc46d3f3a6,Ms,9043,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+5b5705ecf9cab2fd,Ms,9045,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+47aa0ef2ac70b331,Ms,9046,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+86a5a6c01ea74012,Ms,9048,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+ba7d59cbdc728d60,Ms,9090,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+493f7e6b064c15d7,Ms,9091,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+42ee6a125a096ddb,Ms,9092,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+1984603583c27a2f,Ms,9109,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+318626cf6ab538e6,Ms,9110,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+3fb28740dddfab52,Ms,9111,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+51a4ecf5bb1e3661,Ms,9112,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+3ccabae4caf79a29,Ms,9113,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+175c31344b4e1135,Ms,9114,livre,recusado,tamanho de saída do mesh shader excede o limite,aceito,0
+dd815378fda6ddf6,Ms,9719,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+3da1ce3d20af1772,Ms,9720,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+c4365cb8ac268bdb,Ms,9721,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+b2e50ab5c9b534eb,Ms,9722,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+7ede343a22c2d5dd,Vs,9969,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+a16d57d88e5f18dc,Vs,9973,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+4d61bf208f265d03,Vs,10028,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+ee6dacb3725431dd,Vs,10064,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+73cf506c74194447,Vs,10065,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+1707628854aa2241,Vs,10066,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+d4823da48e7f60ba,Vs,10067,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+c000bb53260897c3,Vs,10068,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+28d40a9c4296f9af,Vs,10083,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+cbf4a31fa0ce4ac8,Vs,10084,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+0e69aa5aa95cf36d,Vs,10085,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+bb9d802a14d219fd,Vs,10086,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+22780452dafd69d2,Vs,10087,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+2e402812b6e75c89,Vs,10088,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+8244cd5a02ae4583,Vs,10089,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+aed86c809b7ac629,Vs,10090,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+ecae93c78aa15690,Vs,10091,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+3e6a88bda325410d,Vs,10092,livre,recusado,assinatura de saída do contêiner diverge do módulo DXIL,aceito,0
+7115e46a79c78f98,Ps,10467,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+15a9fb25edffaa51,Ps,10468,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+afbd83c8d3eb99c3,Ps,10469,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+4357362076b955db,Ps,10470,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+659fe9cae59dbd88,Ps,10471,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+9f6cb640bd034080,Ps,10472,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+3dd324679c102356,Ps,10473,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+85ad487bbb432c90,Ps,10474,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+c7e1d6e5307bc44f,Ps,10477,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+4a399c417a239bc8,Ps,10478,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+e2e647a589af221e,Ps,11200,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+59b1ba494f18c894,Ps,11201,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+ea98bc1ec4cdf863,Ps,11203,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+b8ca32a6899b87fb,Ps,11204,livre,recusado,interpolação de posição incompatível com a saída de profundidade do shader de pixels,aceito,0
+af0cbb33fc5c402f,Ps,11280,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+61d47169dce53a3b,Ps,11281,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+dd50e32c8f8401b0,Ps,11283,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+6695d7f5e3f6d351,Ps,12418,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+7e80c1635201799c,Ps,12419,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+c22550963af9670d,Ps,12436,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+54be5ba679009fe3,Ps,12439,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+8b93cf3a6fe3be20,Ps,12441,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+b556dd95c6d849ca,Ps,12442,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+be038c28fbd8facf,Ps,15376,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+8e7a1f1c9c0cc3d4,Ps,15797,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+264c02dfdc267c52,Ps,15870,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+57f90253f26a29c7,Ps,18066,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+1a3c05a4c0bec967,Ps,18310,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+63296097bcbf71e6,Ps,20398,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+ccfabc83c5c1cd02,Ps,20399,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+b0386fcdf59ae3d6,Ps,20422,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+c40aea97d7451da0,Ps,20423,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+de5b40847266d200,Ps,20446,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+8bbc154295243bc6,Ps,20447,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+b698e137856b0acb,Ps,20470,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+c78c36d7e5ce34b5,Ps,20482,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+999de9c4262184ce,Ps,20483,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+e97925844415fcb9,Ps,20506,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+000cf64578e85220,Ps,20507,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+67d09d1d0aa56757,Ps,20530,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+778b687c5ab60211,Ps,20531,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+7a9adf19d7d981c7,Ps,20542,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+70acf9ffdd24a6ce,Ps,20543,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+69d336ccced08035,Ps,20556,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+f2466b619490ffc4,Ps,20557,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+d5abc54232e30e15,Ps,20568,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+bce743e26cb7a33c,Ps,20569,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+5d7958694e9e246d,Ps,20576,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+f133428c362e5234,Ps,20577,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+b28186389b5b9353,Ps,20578,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+02d13778d7131810,Ps,20579,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+f583226c316d7fff,Ps,20580,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+124e65522054ae7a,Ps,20581,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+85c71ce9dd8f45ad,Ps,20582,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+8ec65a491168a569,Ps,20583,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+1d8d842ceac1fada,Ps,20584,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+0b0e0b59a44ce02f,Ps,20585,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+1b1a663bba39b53a,Ps,20586,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+b6a7ed8c08afe6cd,Ps,20836,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+5ea9f1f70cca9147,Ps,20839,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+abc5ab125b89526f,Ps,20845,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+b9b3eba1aca85ba4,Ps,20850,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+e99f571313afb8ae,Ps,20853,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+c31511d41e8a5a4b,Ps,20859,livre,recusado,assinatura com modos de interpolação conflitantes,aceito,0
+0dd5cd4f1f73076a,Ps,20997,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+c767a34a508ca270,Ps,20998,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+2e363421f9565261,Ps,20999,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+2e78b1a9888baba4,Ps,21000,livre,recusado,assinatura de entrada do contêiner diverge do módulo DXIL,aceito,0
+5c6224a6bc3a4066,Cs,21556,64,aceito,,recusado,0
+9bdd33d77fb8ca0f,Cs,21557,64,aceito,,recusado,0
+e328f21c870d6a84,Cs,21564,64,aceito,,recusado,0
+070a5e1b3f1bd670,Cs,21565,64,aceito,,recusado,0
+dd4e462e22e17379,Cs,21566,64,aceito,,recusado,0
+9b0e0aa220136c9b,Cs,21567,64,aceito,,recusado,0
+d2acc0bad48916d2,Cs,21569,64,aceito,,recusado,0
+e24dff38794241ab,Cs,21573,64,aceito,,recusado,0
+78c04f8d197a2904,Cs,21574,64,aceito,,recusado,0
+407d9e8a4dae72e5,Cs,21575,64,aceito,,recusado,0
+e798cc38df9dabc0,Cs,21582,64,aceito,,recusado,0
+4996d173208d83eb,Cs,21583,64,aceito,,recusado,0
+53c21e950d143cc7,Cs,21591,64,aceito,,recusado,0
+fd46520032208bed,Cs,21604,64,aceito,,recusado,0
+0c028454b58543f0,Cs,21662,64,aceito,,recusado,0
+eab96ed5d1684967,Cs,21663,64,aceito,,recusado,0
+eae3498e6553afa8,Cs,21666,64,aceito,,recusado,0
+67353810417f6c19,Cs,21667,64,aceito,,recusado,0
+b8f3f7979d6bbc50,Cs,21669,64,aceito,,recusado,0
+4e9b58cc637d9272,Cs,21670,64,aceito,,recusado,0
+07f451a14b13fecb,Cs,21672,64,aceito,,recusado,0
+10efcf59eb60cca7,Cs,21673,64,aceito,,recusado,0
+3a56bc8c4389a473,Cs,21674,64,aceito,,recusado,0
+4e5d5eee2aaffd68,Cs,21675,64,aceito,,recusado,0
+c5bb7c82b9ca98cd,Cs,21676,64,aceito,,recusado,0
+52a86f2c41d1882b,Cs,21677,64,aceito,,recusado,0
+191ecaed66eea3b1,Cs,21678,64,aceito,,recusado,0
+65de113e23fa4fdd,Cs,21679,64,aceito,,recusado,0
+be6ce5d849d51127,Cs,21680,64,aceito,,recusado,0
+804b342cb4b9d1e9,Cs,21681,64,aceito,,recusado,0
+ab5455fc6abb804f,Cs,21682,64,aceito,,recusado,0
+922e1d0ee1e19a85,Cs,21683,64,aceito,,recusado,0
+31d703207b51549a,Cs,21684,64,aceito,,recusado,0
+240cb516c1af0bc3,Cs,21685,64,aceito,,recusado,0
+1d44a723bdebbf27,Cs,21686,64,aceito,,recusado,0
+466ec41d3f9d24c0,Cs,21688,64,aceito,,recusado,0
+56f3bf2d9388e5a7,Cs,21690,64,aceito,,recusado,0
+d7db57731ada919b,Cs,21691,64,aceito,,recusado,0
+b4b0427232707598,Cs,21694,64,aceito,,recusado,0
+abd7a22106898c66,Cs,21695,64,aceito,,recusado,0
+4b57ec4af6de25fe,Cs,21696,64,aceito,,recusado,0
+c41ee78453b1eed8,Cs,21736,64,aceito,,recusado,0
+e4576c6eca0f8ce3,Cs,21763,64,aceito,,recusado,0
+0709e8356abd9082,Cs,21764,64,aceito,,recusado,0
+726205f726e842e7,Cs,21793,64,aceito,,recusado,0
+e18931c72af42e46,Cs,21799,64,aceito,,recusado,0
+0df635ace0117319,Cs,21800,64,aceito,,recusado,0
+6298cb5bfeb38e94,Cs,21801,64,aceito,,recusado,0
+3142b71ea80fc214,Cs,21802,64,aceito,,recusado,0
+2f03a2df10503cef,Cs,21806,64,aceito,,recusado,0
+78002af174ef11fc,Cs,21811,64,aceito,,recusado,0
+317f9d22d946ff2e,Cs,21816,64,aceito,,recusado,0
+291822a279c07067,Cs,21817,64,aceito,,recusado,0
+2b17036bf3a1d615,Cs,21819,64,aceito,,recusado,0
+f83f0ca30c60c3ac,Cs,21820,64,aceito,,recusado,0
+f8a6133bfedc5759,Cs,21821,64,aceito,,recusado,0
+445c61b3089eb8f0,Cs,21822,64,aceito,,recusado,0
+9afd549c4f530901,Cs,21834,64,aceito,,recusado,0
+5f23841fb559271f,Cs,21835,64,aceito,,recusado,0
+82849f7a614208eb,Cs,21836,64,aceito,,recusado,0
+3102e95d21de2555,Cs,21837,64,aceito,,recusado,0
+adce5d700b5d62ff,Cs,21838,64,aceito,,recusado,0
+060053cd26004855,Cs,21839,64,aceito,,recusado,0
+caf8b94c0aacf773,Cs,21840,64,aceito,,recusado,0
+2dc602192abf6288,Cs,21841,64,aceito,,recusado,0
+57e22fc89b753d80,Cs,21842,64,aceito,,recusado,0
+49338beeb3ddee9f,Cs,21843,64,aceito,,recusado,0
+422b8982321f5205,Cs,21844,64,aceito,,recusado,0
+731d3da2c35a9194,Cs,21845,64,aceito,,recusado,0
+5c2a6b23f101c148,Cs,21847,64,aceito,,recusado,0
+d7321db45f9b9ec5,Cs,21848,64,aceito,,recusado,0
+b7ce97cc1bcf6e5b,Cs,21849,64,aceito,,recusado,0
+b2fbb4bf83182e3c,Cs,21850,64,aceito,,recusado,0
+c2a5c61008f8c2aa,Cs,21851,64,aceito,,recusado,0
+446b7f0228988447,Cs,21852,64,aceito,,recusado,0
+9364301927f489d0,Cs,21853,64,aceito,,recusado,0
+42683eebec081520,Cs,21854,64,aceito,,recusado,0
+de460401bbd12c39,Cs,21855,64,aceito,,recusado,0
+c2feb7c3d36d4eff,Cs,21856,64,aceito,,recusado,0
+142dd782c6bed4ac,Cs,21857,64,aceito,,recusado,0
+ec68a4e805ecba26,Cs,21858,64,aceito,,recusado,0
+2cfa4a6ad9ef005a,Cs,21863,64,aceito,,recusado,0
+cf0742ec8079a6eb,Cs,21864,64,aceito,,recusado,0
+b4db8c3785b6fbc5,Cs,21876,64,aceito,,recusado,0
+bb251ee17630d843,Cs,21877,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+a91247fb46baf191,Cs,21878,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+5c3fa0ff4fccb7bc,Cs,21879,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+823509c3c63d3947,Cs,21880,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+d55b760b0ebddc24,Cs,21883,64,aceito,,recusado,0
+41aa4d3d51094531,Cs,21885,64,aceito,,recusado,0
+4869d261ac95b961,Cs,21888,64,aceito,,recusado,0
+2365ac7d30dd6f0c,Cs,21889,64,aceito,,recusado,0
+45f0c5430e25b956,Cs,21896,64,aceito,,recusado,0
+9baa8cce3a8ad332,Cs,21898,64,aceito,,recusado,0
+8dbbdc8470b9ab03,Cs,21900,64,aceito,,recusado,0
+cd5aaf9ca7c2d8ee,Cs,21901,64,aceito,,recusado,0
+06cf47dbd76827cd,Cs,21902,64,aceito,,recusado,0
+df3cf10a274e26ca,Cs,21903,64,aceito,,recusado,0
+9662515112a3f961,Cs,21904,64,aceito,,recusado,0
+a9761e33d7cbe220,Cs,21905,64,aceito,,recusado,0
+c9074ed53445fd20,Cs,21906,64,aceito,,recusado,0
+18d957e62926ed3e,Cs,21907,64,aceito,,recusado,0
+407eca669212d400,Cs,21908,64,aceito,,recusado,0
+ae0deeafe219c15c,Cs,21909,64,aceito,,recusado,0
+5e3dd99e0f067aee,Cs,21910,64,aceito,,recusado,0
+9fe711566bec0d0a,Cs,21911,64,aceito,,recusado,0
+7842e2ce8ccd9280,Cs,21914,64,aceito,,recusado,0
+a40ae27594631121,Cs,21915,64,aceito,,recusado,0
+fd6e1cbec58e93a9,Cs,21916,64,aceito,,recusado,0
+c6a4ca484a40cc64,Cs,21917,64,aceito,,recusado,0
+0bf394f8aa729a58,Cs,21921,64,aceito,,recusado,0
+44094a03d6d521c5,Cs,21924,64,aceito,,recusado,0
+90fe2f65e9e589b5,Cs,21925,64,aceito,,recusado,0
+369cbe906ea72764,Cs,21928,64,aceito,,recusado,0
+196bf6114ff3a131,Cs,21929,64,aceito,,recusado,0
+92c12c7a7d607a9a,Cs,21943,64,aceito,,recusado,0
+bfad8c6743ac5977,Cs,21946,64,aceito,,recusado,0
+7ee4f3096e91f950,Cs,21959,64,aceito,,recusado,0
+2809db6c31de483d,Cs,21980,64,aceito,,recusado,0
+40bc5fd052acfdf4,Cs,21994,64,aceito,,recusado,0
+f8f712930c606707,Cs,21995,64,aceito,,recusado,0
+294e7cdd91ebd1f1,Cs,21996,64,aceito,,recusado,0
+75aa1158d1443760,Cs,22023,32,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+14264103296aa43a,Cs,22043,64,aceito,,recusado,0
+ba8d7e9186d13c60,Cs,22060,32,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+e07a678d3f79d4cd,Cs,22074,64,aceito,,recusado,0
+5a51983c7d66607b,Cs,22091,32,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+d7752c9f275803d8,Cs,22111,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+b80cd30e37e3fa05,Cs,22112,32,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+5964b734c70b91eb,Cs,22114,64,aceito,,recusado,0
+1e39de85388c6540,Cs,22148,64,aceito,,recusado,0
+7c4002c5baa28f33,Cs,22149,64,aceito,,recusado,0
+b208a056b297b48d,Cs,22150,64,aceito,,recusado,0
+f0aa2b1e79275592,Cs,22153,64,aceito,,recusado,0
+f79824724d8e2daf,Cs,22154,64,aceito,,recusado,0
+acf14a70f37fb012,Cs,22155,64,aceito,,recusado,0
+3c196d81eca7ff15,Cs,22156,64,aceito,,recusado,0
+119ee96f602f1668,Cs,22161,64,aceito,,recusado,0
+9f3ecb8d133084bf,Cs,22186,64,aceito,,recusado,0
+51e19585b4753814,Cs,22187,64,aceito,,recusado,0
+aaabcd7a8ec90db8,Cs,22188,64,aceito,,recusado,0
+77095215a4b360e5,Cs,22554,64,aceito,,recusado,0
+e91575ce58238137,Cs,22557,64,aceito,,recusado,0
+e8f6ae0597846841,Cs,22563,64,recusado,operação incompatível com o estágio ou com as propriedades da entrada,recusado,0
+3e55d5ea47dbcfb1,Cs,22605,64,recusado,operação incompatível com o estágio ou com as propriedades da entrada,recusado,0
+c256ba4a5ae07ebe,Cs,22609,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+58eaf4a171102e0a,Cs,22610,64,recusado,operação incompatível com o estágio ou com as propriedades da entrada,recusado,0
+34d88edf583f3778,Cs,22684,64,aceito,,recusado,0
+6336cb3769fc53d7,Cs,22686,64,aceito,,recusado,0
+a64f464c720ebaed,Cs,22687,64,aceito,,recusado,0
+136986812880cead,Cs,22690,64,aceito,,recusado,0
+5b2ce592c3a5dd09,Cs,22695,64,recusado,operação incompatível com o estágio ou com as propriedades da entrada,recusado,0
+4ceef06fab7b49dc,Cs,22696,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+f42a5dca3107b08e,Cs,22697,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+d864923596f7bf27,Cs,22706,64,aceito,,recusado,0
+8885c63bf7de1242,Cs,22707,64,aceito,,recusado,0
+103169cc282057de,Cs,22708,64,aceito,,recusado,0
+06efbac74337f1f9,Cs,22709,64,aceito,,recusado,0
+f9f99e5e42f9181b,Cs,22710,64,aceito,,recusado,0
+577248728544d74b,Cs,22718,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+e9f044cc2135ac16,Cs,22719,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+ce2378e5e8711aad,Cs,22721,64,aceito,,recusado,0
+2c2075d881142585,Cs,22727,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+731a39171b568298,Cs,22729,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+a1bf269d5b19f025,Cs,22732,64,aceito,,recusado,0
+bc76c37f9fa3672b,Cs,22754,64,aceito,,recusado,0
+12b0005a30bc18a9,Cs,22755,64,aceito,,recusado,0
+2620618869072a85,Cs,22756,64,aceito,,recusado,0
+0a5ecfee6b79e13b,Cs,22759,64,aceito,,recusado,0
+2889c21328c69e58,Cs,22761,64,aceito,,recusado,0
+888af37a584acf98,Cs,22763,64,aceito,,recusado,0
+03546d9c50d82518,Cs,22765,64,aceito,,recusado,0
+04e36794ef6fdf63,Cs,22770,64,aceito,,recusado,0
+b1eb5db361c10621,Cs,22771,64,aceito,,recusado,0
+1963cfb471a3cf19,Cs,22773,64,aceito,,recusado,0
+c07823591d4c66c0,Cs,22774,64,aceito,,recusado,0
+eb9a057a81d18c42,Cs,22783,64,aceito,,recusado,0
+3dc62b6d7cb0d0b0,Cs,22788,64,aceito,,recusado,0
+f41afb810c1e29c6,Cs,22789,64,aceito,,recusado,0
+25328ea424d08c00,Cs,22816,64,aceito,,recusado,0
+b0d5ffa0801b7450,Cs,22819,64,aceito,,recusado,0
+348e1e8c414c7eca,Cs,22847,livre,recusado,operação incompatível com o estágio ou com as propriedades da entrada,aceito,0
+e99d19aac5b0bcb4,Cs,22980,64,aceito,,recusado,0
+2cc4c197ee29e291,Cs,23609,64,aceito,,recusado,0
+a14c1da4be7b9837,Cs,23610,64,aceito,,recusado,0
+5e7cd6d3557a6c35,Cs,23611,64,aceito,,recusado,0
+fd8393c7f4e0e3da,Cs,23612,64,aceito,,recusado,0
+7168dd781ca7efb9,Cs,23613,64,aceito,,recusado,0
+d2b169b82f67ec5b,Cs,23614,64,aceito,,recusado,0
+edb8e66237fc38e6,Cs,23615,64,aceito,,recusado,0
+049459e0c78e0d50,Cs,23616,64,aceito,,recusado,0
+11276d0c8bbe180a,Cs,23617,64,aceito,,recusado,0
+c7d7a6283fad3cd6,Cs,23618,64,aceito,,recusado,0
+03e3e26783a5799b,Cs,23620,64,aceito,,recusado,0
+9d1d228b02e56a96,Cs,23623,64,aceito,,recusado,0
+dd411d22d78b3625,Cs,23625,64,aceito,,recusado,0
+b7953a05b189dfc1,Cs,23636,64,aceito,,recusado,0
+89ed0b981f99573c,Cs,23647,64,aceito,,recusado,0
+b1ef93ea4cf24e66,Cs,23651,64,aceito,,recusado,0
+81c535cf85fd9fd5,Cs,23658,64,aceito,,recusado,0
+4031c6c05fa7ec48,Cs,23659,64,aceito,,recusado,0
+6547aeeef562cc81,Cs,23660,64,aceito,,recusado,0
+0ffd3b911e35e7d0,Cs,23661,64,aceito,,recusado,0
+34992f2b65a789a5,Cs,23662,64,aceito,,recusado,0
+cdaa46da629ca631,Cs,23663,64,aceito,,recusado,0
+71883e40620a567a,Cs,23664,64,aceito,,recusado,0
+3c9d23fa83d63d43,Cs,23666,64,aceito,,recusado,0
+068786c4b7e04851,Cs,23667,64,aceito,,recusado,0
+1069ceb574bc92ca,Cs,23668,64,aceito,,recusado,0
+780546beec578f2c,Cs,23669,64,aceito,,recusado,0
+441c0b3940ddfa2d,Cs,23670,64,aceito,,recusado,0
+49460c1d1b5fafa0,Cs,23686,64,aceito,,recusado,0
+ac8367cf999810a6,Cs,23693,64,aceito,,recusado,0
+72b07f1606fb310f,Cs,23694,64,aceito,,recusado,0
+488b12f581b37bfc,Cs,23705,64,aceito,,recusado,0
+1b1a62444e4ca639,Cs,23706,64,aceito,,recusado,0
+a8291de05d8b095c,Cs,23707,64,aceito,,recusado,0
+6529806404cec985,Cs,23708,64,aceito,,recusado,0
+fecab3f50f335172,Cs,23709,64,aceito,,recusado,0
+83d6b67393c1aa6d,Cs,23710,64,aceito,,recusado,0
+857144d087e8dbcb,Cs,23711,64,aceito,,recusado,0
+c89f7bd38af4f529,Cs,23712,64,aceito,,recusado,0
+b2b1ea29bc3987db,Cs,23713,64,aceito,,recusado,0
+d5f011b145497918,Cs,23716,64,aceito,,recusado,0
+058b0f6379a8e312,Cs,23740,64,aceito,,recusado,0
+f0c91b4d2578f5bf,Cs,23754,64,aceito,,recusado,0
+bad01f53f53248e5,Cs,23755,64,aceito,,recusado,0
+fea2b7d3f17b504f,Cs,23756,64,aceito,,recusado,0
+5741294cf872ffb9,Cs,23757,64,aceito,,recusado,0
+f11c3ddeaeb7d602,Cs,23758,64,aceito,,recusado,0
+d3e5b737ea7cc150,Cs,23763,64,aceito,,recusado,0
+55d2bce91ec9abcc,Cs,23764,64,aceito,,recusado,0
+0f303afc7d91c03a,Cs,23765,64,aceito,,recusado,0
+296c09ed2b3beaea,Cs,23766,64,aceito,,recusado,0
+d38c615b0678be12,Cs,23767,64,aceito,,recusado,0
+227a043578e42fd8,Cs,23772,64,aceito,,recusado,0
+fef7c913d65ac121,Cs,23773,64,aceito,,recusado,0
+c5cb8ef6e18af21a,Cs,23774,64,aceito,,recusado,0
+b9fd43023ccbee2e,Cs,23841,64,aceito,,recusado,0
+5b38ed0c75a1709b,Cs,23842,64,aceito,,recusado,0
+578751e8c1661b17,Cs,23843,64,aceito,,recusado,0
+a90b4f953443a7f4,Cs,23854,64,aceito,,recusado,0
+ec19b58c520add6c,Cs,23855,64,aceito,,recusado,0
+8149606112040c03,Cs,23856,64,aceito,,recusado,0
+ffa3a7645374474b,Cs,23857,64,aceito,,recusado,0
+aeac9d880daff3ba,Cs,23860,64,aceito,,recusado,0
+a4cb3ce527ad8569,Cs,23861,64,aceito,,recusado,0
+3b02415f67c6b0d8,Cs,23862,64,aceito,,recusado,0
+13fe788a3c12362f,Cs,23864,64,aceito,,recusado,0
+6d0d87c947389c8d,Cs,23865,64,aceito,,recusado,0
+98fef92f7a6d825e,Cs,23866,64,aceito,,recusado,0
+a09f0c1fae2b5ca3,Cs,23867,64,aceito,,recusado,0
+1d434307d981352a,Cs,23868,64,aceito,,recusado,0
+f38f83439083b9ef,Cs,23870,64,aceito,,recusado,0
+22338086ea4c5364,Cs,23874,64,aceito,,recusado,0
+1372e2d51663b33d,Cs,23877,64,aceito,,recusado,0
+d89ff746914b8cf7,Cs,23879,64,aceito,,recusado,0
+df35721ceb657e07,Cs,23880,64,aceito,,recusado,0
+80e25fa666764942,Cs,23881,64,aceito,,recusado,0
+e5d3e62bd4dfc1fb,Cs,23882,64,aceito,,recusado,0
+5c85d508f4659843,Cs,23883,64,aceito,,recusado,0
+fcd8b294ee41c57f,Cs,23884,64,aceito,,recusado,0
+0e90505eff274aa4,Cs,23886,64,aceito,,recusado,0
+1f1fbd86759b3da2,Cs,23887,64,aceito,,recusado,0
+b96880482a17f632,Cs,23888,64,aceito,,recusado,0
+dbf247e6efc048df,Cs,23889,64,aceito,,recusado,0
+ea5d5c9a44e9cd1f,Cs,23890,64,aceito,,recusado,0
+c4183d3cbee28e8e,Cs,23892,64,recusado,operação incompatível com o estágio ou com as propriedades da entrada,recusado,0
+02384a60fda6f2d0,Cs,23894,64,aceito,,recusado,0
+c85cb6bc1cd8e2ad,Cs,23897,64,aceito,,recusado,0
+c042a10ed3428758,Cs,23899,64,aceito,,recusado,0
+c80d02ddc38ef279,Cs,23900,64,aceito,,recusado,0
+339d476c267c03c7,Cs,23901,64,aceito,,recusado,0
+39998898c90889b2,Cs,23902,64,aceito,,recusado,0
+6832a9da15c2e584,Cs,23903,64,aceito,,recusado,0
+6b82bc7d22016cb5,Cs,23904,64,aceito,,recusado,0
+6d5e8adf383092f1,Cs,23906,64,aceito,,recusado,0
+e75ab410050ae3e0,Cs,23907,64,aceito,,recusado,0
+105a79dad3c5dfbf,Cs,23919,64,aceito,,recusado,0
+1a61a99e8379f7d6,Cs,23939,64,aceito,,recusado,0
+9ba86fa7dcb9f314,Cs,23940,64,aceito,,recusado,0
+3d828e61f0b6bddd,Cs,23941,64,aceito,,recusado,0
+1aa247ed3653b616,Cs,23999,64,aceito,,recusado,0
+665b261b36552c65,Cs,24010,64,aceito,,recusado,0
+ac11be2c8599804e,Cs,24013,64,aceito,,recusado,0
+0e366d15868e17bd,Cs,24014,64,aceito,,recusado,0
+bdf438d5731d36cc,Cs,24017,64,aceito,,recusado,0
+a2f1004f8d6d7aad,Cs,24019,64,aceito,,recusado,0
+9809b8d965b04935,Cs,24021,64,aceito,,recusado,0
+79e1fb1d349c7388,Cs,24074,64,aceito,,recusado,0
+d697ebf7e762100b,Cs,24081,64,aceito,,recusado,0
+f8dc520ba59cd5ce,Cs,24082,64,aceito,,recusado,0
+46ef0e2b7b9ce038,Cs,24083,64,aceito,,recusado,0
+01d0c7a8cab915bd,Cs,24085,64,aceito,,recusado,0
+6a5aa8dcd8f459e5,Cs,24086,64,aceito,,recusado,0
+d24ad002f5250958,Cs,24088,64,aceito,,recusado,0
+0deb101f3fa10764,Cs,24089,64,aceito,,recusado,0
+9d3e77bf8679aefb,Cs,24090,64,aceito,,recusado,0
+2fa2f94f560faf39,Cs,24174,64,aceito,,recusado,0
+9e096a1111c6faaa,Cs,24175,64,aceito,,recusado,0
+fa0c0819dc86ca60,Cs,24177,64,aceito,,recusado,0
+00bcbbf278ee3d9d,Cs,24178,64,aceito,,recusado,0
+7f61193d2c0e5f22,Cs,24182,64,aceito,,recusado,0
+e81fd01512ba1002,Cs,24191,64,aceito,,recusado,0
+6ef74cd68c18dc17,Cs,25849,64,aceito,,recusado,0
+6e4749fc291098b4,Cs,25850,64,aceito,,recusado,0
+d2232744ac33b9b2,Cs,25851,64,aceito,,recusado,0
+739dabc239f1dfca,Cs,25853,64,aceito,,recusado,0
+598df1887bc9ef69,Cs,25854,64,aceito,,recusado,0
+7f6bccdca1b81e79,Cs,25855,64,aceito,,recusado,0
+42dc3971291738cc,Cs,25857,64,aceito,,recusado,0
+ce9f02bd6f8ba5d9,Cs,25858,64,aceito,,recusado,0
+25a22c5683e1d1e8,Cs,25859,64,aceito,,recusado,0
+e726596d7b069af9,Cs,25861,64,aceito,,recusado,0
+ac0c08c9f3f6e2b0,Cs,25862,64,aceito,,recusado,0
+9f663c16f4ba7f37,Cs,25863,64,aceito,,recusado,0
+1d877ce3d6275b08,Cs,25865,64,aceito,,recusado,0
+567be080f5758afe,Cs,25866,64,aceito,,recusado,0
+abf6be71893a9276,Cs,25867,64,aceito,,recusado,0
+1bdddac2bd0b6ad8,Cs,25869,64,aceito,,recusado,0
+ad3385fef83fdf3c,Cs,25870,64,aceito,,recusado,0
+754e38ca2378a43e,Cs,25871,64,aceito,,recusado,0
+de525ef36ccc39a7,Cs,25873,64,aceito,,recusado,0
+1eebe60198db43ed,Cs,25874,64,aceito,,recusado,0
+3c2bb29e903fdb38,Cs,25875,64,aceito,,recusado,0
+b68f0931f1f47e61,Cs,25877,64,aceito,,recusado,0
+88994c3496045f51,Cs,25878,64,aceito,,recusado,0
