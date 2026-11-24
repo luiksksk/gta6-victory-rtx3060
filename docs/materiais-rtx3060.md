@@ -2,6 +2,8 @@
 
 A variante experimental `Materiais` executa os shaders de pixels do título. Ela prepara os recursos que os shaders selecionam diretamente pelo índice no heap de descritores, inclusive texturas carregadas por streaming. O ponto de comparação é a rua que apareceu na variante `CoresPlanas` após o letreiro de Vice City. O teste usa Windows, RTX 3060 de 12 GB, Ryzen 5 5600GT, o perfil Series X e uma instalação local completa da versão 1.0.2.1. [Coordenação e resultados dos colaboradores](https://github.com/luiksksk/gta6-victory-rtx3060/issues/2)
 
+Na execução da variante publicada, a janela mostrou uma personagem em primeiro plano, com a cabeça, o tronco e o braço estendido. Duas figuras humanas também apareceram ao fundo. As poses mudaram entre capturas. O alvo exibido continha faixas azuis e verdes sobre fundo preto. A pele, a roupa e a iluminação final continuam sem confirmação visual. O processo terminou com `0xc0000005` em `+0x23cf683`, numa tentativa de escrita no endereço zero.
+
 ## Reproduzir
 
 Na raiz deste repositório, após instalar os pré-requisitos do manual, faça a compilação e inicie com o caminho da sua instalação.
@@ -11,7 +13,11 @@ Na raiz deste repositório, após instalar os pré-requisitos do manual, faça a
 .\Iniciar-VIctory.cmd -Variante Materiais -Console series-x -PastaJogo "D:\Jogos\GTA VI"
 ```
 
-O lançador prepara o catálogo antes de abrir a janela e mostra a porcentagem concluída. A variante usa perfil e cache próprios. Para entrar na missão com uma cópia de um perfil já configurado, acrescente `-PerfilOrigem` na primeira execução. A apresentação escolhe o alvo RGBA8 de 2560 × 1440 observado na rua. Os comandos indiretos são habilitados depois de 24 quadros com malhas. [Pré-requisitos e uso do perfil](../MANUAL.md)
+O lançador prepara o catálogo antes de abrir a janela e mostra a porcentagem concluída. Na RTX 3060, a variante traduziu 24.718 dos 25.985 shaders únicos e recusou 1.267. A referência CoresPlanas traduziu 22.206 do mesmo catálogo. O saldo foi de 2.512 traduções a mais. Cada pipeline ainda precisa ser aceito pelo driver e produzir a imagem esperada.
+
+O catálogo de pendências traz as 1.267 recusas por hash e a mensagem de cada tentativa de tradução. O estágio identificado foi compute em 580 casos, malha em 348, pixel em 70 e vértice em 42. Restam 227 de estágio desconhecido. A coluna `recusa_registrada_na_execucao` marca os 189 que também apareceram no log de execução, que inclui a preparação de pipelines. Conferimos cada hash com o contêiner da instalação e cada mensagem com o registro de cache da variante. [Baixar o CSV dos shaders pendentes](shaders-pendentes-materiais.csv)
+
+A variante usa perfil e cache próprios. Para entrar na missão com uma cópia de um perfil já configurado, acrescente `-PerfilOrigem` na primeira execução. A apresentação escolhe o alvo RGBA8 de 2560 × 1440 observado na rua. Os comandos indiretos são habilitados depois de 24 quadros com malhas. [Pré-requisitos e uso do perfil](../MANUAL.md)
 
 ## Código e verificação
 
@@ -19,7 +25,7 @@ A árvore de fontes da variante é `6fc6ceb882461675a417fe9160a194aea8df43ea`. O
 
 Quando a placa informa largura mínima e máxima de 32 lanes, o carregador confere se a declaração do DXIL cabe nessa largura. Quando a tradução principal falha ou produz uma largura incompatível, ele tenta a integração de materiais e a alternativa de compute para Wave32. Shaders que exigem uma tabela adicional de strides só podem usar a alternativa se o backend puder representar seus vínculos. [Tradutor de materiais](https://github.com/Marvisak/VIctory/commit/d3917df4e9ab836f8bbf997590310cf40c835202) · [Tradutor Wave32](https://github.com/Marvisak/VIctory/commit/c04788537417107677d8dc5a90484f217ee22d2f)
 
-Uma experiência adicional grava a cópia de uma textura para a GPU quando os dados de staging mudam. O patch se aplica sobre a árvore `6fc6ceb8` e foi compilado separadamente. [Patch de cópias condicionais](../patches/uploads-texturas-alteradas.patch) · [Trabalho de origem](https://github.com/Marvisak/VIctory/commit/6a96adbf)
+Uma experiência adicional grava a cópia de uma textura para a GPU quando os dados de staging mudam. O patch se aplica sobre a árvore `6fc6ceb8` e foi compilado separadamente. O teste `bindless_slots_materialize_refresh_and_copy_back_on_gpu` recuperou o valor esperado de uma textura de teste pelos descritores na GPU física. Três testes com WARP, o adaptador de software do D3D12, verificaram o reenvio após modificação, a reutilização da textura intacta e a proteção de conteúdo escrito pela GPU. Os quatro testes passaram com a presença dos adaptadores confirmada. [Patch de cópias condicionais](../patches/uploads-texturas-alteradas.patch) · [Trabalho de origem](https://github.com/Marvisak/VIctory/commit/6a96adbf)
 
 ## Medições na RTX 3060
 
@@ -29,8 +35,11 @@ As amostras abaixo cobrem os primeiros dez segundos de relógio após a primeira
 | --- | ---: | ---: | ---: |
 | Referência com cores planas | 3181 | 16,5% | 24,3% |
 | Primeiro ensaio com materiais indexados e listas isoladas | 3100 | 14,8% | 18,4% |
+| Materiais, tradução adaptada a Wave32 e listas agrupadas | 2989 | 43,5% | 19,8% |
 
 O segundo ensaio processou 22.206 de 25.985 shaders com sucesso no tradutor original. A janela exibiu alguns contornos e a cena continuou majoritariamente preta. O processo terminou com remoção do dispositivo. Na última amostra do runtime, cada quadro levou 2.567 ms, dos quais 550 ms foram contabilizados na preparação de descritores e 969 ms na cópia de volta. A captura de alvos acrescentou trabalho e as câmeras avançaram a velocidades diferentes. Essa comparação não estabelece um ganho de FPS.
+
+Na última amostra da variante Materiais, o runtime mediu 1.033 ms por quadro, 171 ms na preparação de descritores e 330 ms na cópia de volta. O trecho também mudou em relação ao ensaio de listas isoladas. A medição de 43,5% de CPU nos dez segundos iniciais dá à equipe um ponto de partida para investigar as cópias e a espera entre filas.
 
 ## O que uma contribuição pode confirmar
 

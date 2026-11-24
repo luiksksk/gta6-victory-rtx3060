@@ -1,8 +1,8 @@
 diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
-index 04738c80cd752a64f93715658c3610ebaa1de097..e7bf23461823c7fe56dcedf57845017df57308da 100644
+index 04738c80cd752a64f93715658c3610ebaa1de097..728306c920462f00b543a684d21964e8acb4b9ba 100644
 --- a/crates/victory-gpu/src/host.rs
 +++ b/crates/victory-gpu/src/host.rs
-@@ -194,42 +194,66 @@ fn create() -> windows::core::Result<Host> {
+@@ -194,42 +194,70 @@ fn create() -> windows::core::Result<Host> {
          let messages = debug
              .then(|| device.cast::<ID3D12InfoQueue>().ok())
              .flatten();
@@ -95,7 +95,11 @@ index 04738c80cd752a64f93715658c3610ebaa1de097..e7bf23461823c7fe56dcedf57845017d
 +    /// the process-global host singleton.
 +    #[cfg(test)]
 +    pub(crate) fn new_warp() -> Option<Host> {
-+        let adapter = warp_adapter().ok()?;
++        // SAFETY: creates an isolated DXGI factory and requests its software adapter.
++        let adapter: IDXGIAdapter = unsafe {
++            let factory: IDXGIFactory4 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).ok()?;
++            factory.EnumWarpAdapter().ok()?
++        };
 +        let mut device: Option<ID3D12Device> = None;
 +        // SAFETY: `adapter` is a verified software WARP adapter.
 +        unsafe { D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_12_0, &mut device).ok()? };
@@ -103,7 +107,7 @@ index 04738c80cd752a64f93715658c3610ebaa1de097..e7bf23461823c7fe56dcedf57845017d
      }
  }
  
-@@ -323,9 +347,15 @@ enum Step {
+@@ -323,9 +351,15 @@ enum Step {
      Run(Box<dyn Fn() + Send>),
      /// Work that writes host memory only.
      Host(Box<dyn Fn() + Send>),
@@ -120,7 +124,7 @@ index 04738c80cd752a64f93715658c3610ebaa1de097..e7bf23461823c7fe56dcedf57845017d
  }
  
  /// What a list does on the CPU when it is submitted: copies between host
-@@ -490,8 +520,8 @@ impl Host {
+@@ -490,8 +524,8 @@ impl Host {
          let mut lists: Vec<Option<ID3D12CommandList>> = Vec::with_capacity(2 * runs.len());
          let mut batch = Batch::default();
          for list in runs {
@@ -131,7 +135,7 @@ index 04738c80cd752a64f93715658c3610ebaa1de097..e7bf23461823c7fe56dcedf57845017d
                  lists.push(Some(prelude));
              }
              lists.push(list.list.cast().ok());
-@@ -813,12 +843,50 @@ impl HostList {
+@@ -813,12 +847,50 @@ impl HostList {
          }
      }
  
@@ -187,7 +191,7 @@ index 04738c80cd752a64f93715658c3610ebaa1de097..e7bf23461823c7fe56dcedf57845017d
              .values()
              .filter_map(|(first, last, copy)| {
                  let real = copy.state.swap(*last, Ordering::Relaxed);
-@@ -831,16 +899,24 @@ impl HostList {
+@@ -831,16 +903,24 @@ impl HostList {
                  })
              })
              .collect();
@@ -215,7 +219,7 @@ index 04738c80cd752a64f93715658c3610ebaa1de097..e7bf23461823c7fe56dcedf57845017d
                  list.Close()
              })
          };
-@@ -1064,8 +1140,17 @@ impl HostList {
+@@ -1064,8 +1144,17 @@ impl HostList {
          self.deferred().copies.push(Step::Host(Box::new(work)));
      }
  
@@ -235,7 +239,7 @@ index 04738c80cd752a64f93715658c3610ebaa1de097..e7bf23461823c7fe56dcedf57845017d
      }
  
      pub(crate) fn defer_readback(&self, readback: crate::readback::Readback) {
-@@ -1074,10 +1159,18 @@ impl HostList {
+@@ -1074,10 +1163,18 @@ impl HostList {
  
      /// Runs the list's submission-time steps; refreshes go into `batch`
      /// (the title's big buffers, a 174 MB one among them, are read by most
@@ -256,7 +260,7 @@ index 04738c80cd752a64f93715658c3610ebaa1de097..e7bf23461823c7fe56dcedf57845017d
          let deferred = self.deferred();
          for (heap, writes) in &deferred.bindless {
              batch.bindless(heap, *writes);
-@@ -1113,12 +1206,6 @@ impl HostList {
+@@ -1113,12 +1210,6 @@ impl HostList {
                      batch.add(shadow, *address, *len);
                      continue;
                  }
@@ -269,7 +273,7 @@ index 04738c80cd752a64f93715658c3610ebaa1de097..e7bf23461823c7fe56dcedf57845017d
                  Step::Run(work) | Step::Host(work) => {
                      if matches!(step, Step::Run(_)) {
                          batch.title_written();
-@@ -1137,10 +1224,17 @@ impl HostList {
+@@ -1137,10 +1228,17 @@ impl HostList {
                      shadow.writing(*address, *len);
                      continue;
                  }
