@@ -20,7 +20,7 @@ $arvores = @{
     Geometria = '85ae3d3dc2cb0770950a3c5cccaf78d694af3f98'
     CoresPlanas = '9d796cbc1f369c9101d3e0123eb27dde574f1190'
     Materiais = '6fc6ceb882461675a417fe9160a194aea8df43ea'
-    SondaMateriais = '0c3b293b7752d3c4e39fb6ebc3a82b6f6f59cd50'
+    SondaMateriais = '23b679fd945e5e36789b7b667478ca26f1b86540'
 }
 # PowerShell accepts case-insensitive parameter values. Keep paths canonical.
 $tipo = switch ($Variante) {
@@ -101,7 +101,7 @@ function Get-PatchedSource {
                 Invoke-Git @('-C',$tmp,'apply','--index','--whitespace=error-all',$clwb)
             }
             if ($tipo -eq 'SondaMateriais') {
-                foreach ($nomePatch in @('vistas-e-pausa-876.patch','texturas-residencia-tardia.patch')) {
+                foreach ($nomePatch in @('vistas-e-pausa-876.patch','texturas-residencia-tardia.patch','cena-na-pausa.patch')) {
                     $arquivo = Join-Path (Join-Path $PSScriptRoot 'patches') $nomePatch
                     Invoke-Git @('-C',$tmp,'apply','--index','--whitespace=error-all',$arquivo)
                 }

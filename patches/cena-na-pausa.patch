@@ -1,0 +1,289 @@
+diff --git a/crates/victory-gpu/src/capture.rs b/crates/victory-gpu/src/capture.rs
+index ee75a70aec442ffbe3c12efca7c2405da9e193fc..caee6e7f3fdb51b684dbbf5f453addafdba33b4c 100644
+--- a/crates/victory-gpu/src/capture.rs
++++ b/crates/victory-gpu/src/capture.rs
+@@ -277,6 +277,9 @@ static SCENE_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
+ fn present_spec() -> Option<(u64, u32, i32, usize)> {
+     static SPEC: std::sync::OnceLock<Option<(u64, u32, i32, usize)>> = std::sync::OnceLock::new();
+     *SPEC.get_or_init(|| {
++        if crate::pause_scene::enabled() {
++            return Some((2560, 1440, DXGI_FORMAT_R8G8B8A8_TYPELESS.0, 0));
++        }
+         let v = std::env::var("VICTORY_PRESENT_TARGET").ok()?;
+         let mut parts = v.split(':');
+         let (w, h) = parts.next()?.split_once('x')?;
+@@ -300,7 +303,7 @@ static PRESENTED: std::sync::Mutex<(
+ )> = std::sync::Mutex::new((0, Vec::new()));
+ 
+ fn note_present(resource: crate::object::This) {
+-    if !SCENE_STARTED.load(Ordering::Relaxed) {return;}
++    if !SCENE_STARTED.load(Ordering::Relaxed) && !crate::pause_scene::enabled() {return;}
+     let Some((w, h, format, _)) = present_spec() else {
+         return;
+     };
+diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
+index afafecf050d1f0dc902355502c2018b732a128b7..da30baefbfc7ea257d92688bde93573e7d3c51fb 100644
+--- a/crates/victory-gpu/src/descriptor/host.rs
++++ b/crates/victory-gpu/src/descriptor/host.rs
+@@ -623,6 +623,16 @@ impl HostHeap {
+         self.keep(index, None);
+     }
+ 
++    #[cfg(feature = "diagnostics")]
++    pub(crate) fn scene_at(&self, index: u32, image: &ID3D12Resource) {
++        // SAFETY: a dynamic slot owned by this list; the typed image permits
++        // a default 2D view. The recording list holds the snapshot.
++        if let Some(host) = host() {
++            unsafe { host.device.CreateShaderResourceView(image, None, self.cpu(index)) };
++            self.keep(index, None);
++        }
++    }
++
+     /// Slot `index` now views `resource` (or nothing of the host's).
+     fn keep(&self, index: u32, resource: Option<ID3D12Resource>) {
+         let mut kept = self.kept.lock().unwrap_or_else(|e| e.into_inner());
+diff --git a/crates/victory-gpu/src/draw.rs b/crates/victory-gpu/src/draw.rs
+index 872fdc3227bbf5778e667b34ea22462ee30ec30b..a815794d958071492403b518946dc24414d4b646 100644
+--- a/crates/victory-gpu/src/draw.rs
++++ b/crates/victory-gpu/src/draw.rs
+@@ -490,7 +490,7 @@ impl State {
+         }
+         for stage in &p.stages {
+             let t = stage.translated();
+-            let made = self.tables(list, &t.used, compute);
++            let made = self.tables(list, &t.used, compute, &stage.shader.hash);
+             if let Some((param, dwords)) = stage.user_data {
+                 let mut values = vec![0u32; dwords as usize];
+                 for u in &t.host.user_data {
+@@ -667,7 +667,9 @@ impl State {
+     /// once: its constant data is copied at submission either way, and the
+     /// big tables the world binds would otherwise take hundreds of slots per
+     /// draw, wrapping the dynamic slots onto lists not yet submitted.
+-    fn tables(&mut self, list: &HostList, used: &[UsedResource], compute: bool) -> Vec<(u8, u32)> {
++    fn tables(&mut self, list: &HostList, used: &[UsedResource], compute: bool, _shader: &str) -> Vec<(u8, u32)> {
++        #[cfg(feature = "diagnostics")]
++        let scene = crate::pause_scene::for_shader(_shader);
+         let tables = |u: &&UsedResource| u.root == RootType::Table;
+         let mut fresh: Vec<u8> = used
+             .iter()
+@@ -733,6 +735,10 @@ impl State {
+                     // SAFETY: a descriptor slot in title memory.
+                     unsafe { (at as *const [u32; 3]).read_unaligned() }.hash(&mut h);
+                 }
++                #[cfg(feature = "diagnostics")]
++                if slot == 1 && let Some(image) = &scene {
++                    image.as_raw().hash(&mut h);
++                }
+                 (table, h.finish())
+             };
+             if let Some(&first) = self.fresh_tables.get(&key) {
+@@ -755,6 +761,16 @@ impl State {
+             // used-resource list names (descriptor arrays).
+             for k in 0..n {
+                 let index = first + k;
++                #[cfg(feature = "diagnostics")]
++                if (slot, k) == (1, 0) && let Some(image) = &scene {
++                    // Only the native upscaler's colour SRV changes. Its adjacent
++                    // constants, and the dither texture in slot 0, stay title-owned.
++                    host.scene_at(index, image);
++                    list.keep(image);
++                    static FIRST: std::sync::Once = std::sync::Once::new();
++                    FIRST.call_once(|| tracing::info!("bound mesh colour to native upscale s1+0"));
++                    continue;
++                }
+                 let used = entries.iter().find(|u| u.table_offset_dwords / 8 == k);
+                 match crate::descriptor::view(table + u64::from(k) * 32) {
+                     Some(View::Constant(address, size)) => {
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+index 3805468bd6437e584edde1476e6d33a338c3b990..909f05f5a61251564fbef421eb76634b2a60bfa2 100644
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -840,7 +840,15 @@ impl HostList {
+     ) -> Option<(&'static ID3D12Resource, u32)> {
+         let texture = crate::resource::host_resource(resource)?;
+         let copy = crate::resource::host_copy(resource)?;
+-        let wanted = legal_state(texture, wanted);
++        self.transition_copy(copy, wanted).map(|before| (texture, before))
++    }
++
++    pub(crate) fn transition_copy(
++        &self,
++        copy: std::sync::Arc<crate::resource::HostTexture>,
++        wanted: u32,
++    ) -> Option<u32> {
++        let wanted = legal_state(&copy.texture, wanted);
+         let mut states = self.states.lock().unwrap_or_else(|e| e.into_inner());
+         match states.entry(std::sync::Arc::as_ptr(&copy) as usize) {
+             std::collections::hash_map::Entry::Vacant(v) => {
+@@ -849,7 +857,7 @@ impl HostList {
+             }
+             std::collections::hash_map::Entry::Occupied(mut o) => {
+                 let before = std::mem::replace(&mut o.get_mut().1, wanted);
+-                (before != wanted).then_some((texture, before))
++                (before != wanted).then_some(before)
+             }
+         }
+     }
+@@ -1640,6 +1648,10 @@ impl Host {
+             ]);
+             list.CopyResource(&back, texture);
+             #[cfg(feature = "diagnostics")]
++            let scene = crate::pause_scene::enabled()
++                .then(|| crate::pause_scene::record(self, &p.copy, frame, frame_meshes, texture))
++                .flatten();
++            #[cfg(feature = "diagnostics")]
+             let capture = crate::capture::wanted(frame, frame_meshes)
+                 .then(|| crate::capture::read_back(&self.device, list, texture))
+                 .flatten();
+@@ -1658,6 +1670,10 @@ impl Host {
+             p.copy.close();
+             self.execute(&[&p.copy]);
+             #[cfg(feature = "diagnostics")]
++            if let Some(image) = scene {
++                crate::pause_scene::publish(image);
++            }
++            #[cfg(feature = "diagnostics")]
+             if let Some((buffer, footprint)) = capture {
+                 crate::capture::save_read_back(frame, &buffer, &footprint);
+             }
+diff --git a/crates/victory-gpu/src/lib.rs b/crates/victory-gpu/src/lib.rs
+index 04197f33fe7922f822899d59a31f25fc27c7eef0..141960ed1b6bc14a987f135d6c7f2531bc374328 100644
+--- a/crates/victory-gpu/src/lib.rs
++++ b/crates/victory-gpu/src/lib.rs
+@@ -17,6 +17,8 @@
+ 
+ #[cfg(all(windows, feature = "diagnostics"))]
+ mod capture;
++#[cfg(all(windows, feature = "diagnostics"))]
++mod pause_scene;
+ pub mod console;
+ #[cfg(all(windows, feature = "diagnostics"))]
+ mod copystat;
+diff --git a/crates/victory-gpu/src/pause_scene.rs b/crates/victory-gpu/src/pause_scene.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ef5b57e0eb813bb8d558d522da838f109960b09a
+--- /dev/null
++++ b/crates/victory-gpu/src/pause_scene.rs
+@@ -0,0 +1,108 @@
++//! Diagnostic for the Series X prologue. Keep the last submitted mesh
++//! frame's material colour available to the title's own upscale and UI.
++use std::sync::{Mutex, OnceLock};
++use windows::Win32::Graphics::Direct3D12::*;
++use windows::Win32::Graphics::Dxgi::Common::*;
++
++static LAST: Mutex<Option<ID3D12Resource>> = Mutex::new(None);
++
++pub(crate) fn enabled() -> bool {
++    static ON: OnceLock<bool> = OnceLock::new();
++    *ON.get_or_init(|| {
++        std::env::var("VICTORY_PAUSE_SCENE").as_deref() == Ok("1")
++            && std::env::var_os("VICTORY_PRESENT_TARGET").is_none()
++    })
++}
++
++fn refresh_scene(meshes: u64, layers: u16, mips: u16, samples: u32) -> bool {
++    meshes > 0 && (layers, mips, samples) == (1, 1, 1)
++}
++
++pub(crate) fn record(
++    host: &crate::host::Host,
++    list: &crate::host::HostList,
++    frame: u64,
++    meshes: u64,
++    presented: &ID3D12Resource,
++) -> Option<ID3D12Resource> {
++    let source = crate::capture::present_override(frame)?;
++    // SAFETY: the captured reference owns the selected texture.
++    let mut desc = unsafe { source.texture.GetDesc() };
++    if source.texture == *presented
++        || desc.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS
++        || !refresh_scene(
++            meshes,
++            desc.DepthOrArraySize,
++            desc.MipLevels,
++            desc.SampleDesc.Count,
++        )
++    {
++        return None;
++    }
++    // A private, immutable typed copy also survives clears and resource reuse
++    // while the title continues presenting UI without submitting meshes.
++    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++    desc.Flags = D3D12_RESOURCE_FLAG_NONE;
++    let heap = D3D12_HEAP_PROPERTIES {
++        Type: D3D12_HEAP_TYPE_DEFAULT,
++        ..Default::default()
++    };
++    let mut image: Option<ID3D12Resource> = None;
++    // SAFETY: compatible size and format family; the list prelude orders the
++    // source against its last submitted writer. Publish only after execution.
++    unsafe {
++        host.device
++            .CreateCommittedResource(
++                &heap,
++                D3D12_HEAP_FLAG_NONE,
++                &desc,
++                D3D12_RESOURCE_STATE_COPY_DEST,
++                None,
++                &mut image,
++            )
++            .ok()?;
++        let image = image?;
++        let read = D3D12_RESOURCE_STATE_COPY_SOURCE;
++        if let Some(before) = list.transition_copy(source.clone(), read.0 as u32) {
++            list.list.ResourceBarrier(&[crate::host::transition(
++                &source.texture,
++                D3D12_RESOURCE_STATES(before as i32),
++                read,
++            )]);
++        }
++        list.list.CopyResource(&image, &source.texture);
++        list.list.ResourceBarrier(&[crate::host::transition(
++            &image,
++            D3D12_RESOURCE_STATE_COPY_DEST,
++            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
++        )]);
++        Some(image)
++    }
++}
++
++pub(crate) fn publish(image: ID3D12Resource) {
++    static FIRST: std::sync::Once = std::sync::Once::new();
++    FIRST.call_once(|| tracing::info!("saved mesh colour for the native upscaler"));
++    *LAST.lock().unwrap_or_else(|e| e.into_inner()) = Some(image);
++}
++
++pub(crate) fn for_shader(hash: &str) -> Option<ID3D12Resource> {
++    if hash != "4f4ec7b16673362f" || !enabled() {
++        return None;
++    }
++    LAST.lock().unwrap_or_else(|e| e.into_inner()).clone()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn pause_keeps_the_last_scene_until_another_mesh_frame() {
++        assert!(refresh_scene(18, 1, 1, 1));
++        assert!(!refresh_scene(0, 1, 1, 1));
++        assert!(!refresh_scene(18, 2, 1, 1));
++        assert!(!refresh_scene(18, 1, 2, 1));
++        assert!(!refresh_scene(18, 1, 1, 4));
++    }
++}
+diff --git a/crates/victory-gpu/src/queue.rs b/crates/victory-gpu/src/queue.rs
+index b6ac0e9465ea048a7dd21b31a9c3079d73b53c6c..3af7696ee3cfe52485fa8391c50ed793bedfe9b1 100644
+--- a/crates/victory-gpu/src/queue.rs
++++ b/crates/victory-gpu/src/queue.rs
+@@ -287,7 +287,8 @@ extern "system" fn present(
+         crate::capture::dump_targets(frame);
+     }
+     #[cfg(all(windows, feature = "diagnostics"))]
+-    if let Some(target) = crate::capture::present_override(frame)
++    if !crate::pause_scene::enabled()
++        && let Some(target) = crate::capture::present_override(frame)
+         && let Some(host) = crate::host::host()
+     {
+         static FIRST: std::sync::Once = std::sync::Once::new();

@@ -17,11 +17,11 @@ O seletor de diagnóstico substitui a saída do título. Para reproduzir a pausa
 
 ## Resultado com vistas de formato explícito
 
-Na execução `menu-vistas-series-x`, SondaMateriais com a adaptação do PR #876 e a saída nativa mostrou **Mapa, Jogo, Loja, Ajuda, Estúdio de fotos e Configurações** em português. A seleção apareceu em mais de uma linha nas capturas da janela. O mecanismo de apresentação registrou um plano em todas as 101 amostras, inclusive as seis após o pedido de pausa. O PR #211 trata a composição de dois planos observada em outra configuração. Nesse ensaio Series X a interface chegou à janela com um único plano. O mapa aberto e o cenário 3D com materiais completos ainda não foram comprovados. A execução terminou com a escrita em zero em `+0x23cf683`.
+Na execução `menu-vistas-series-x`, SondaMateriais com a adaptação descrita na issue #876 e a saída nativa mostrou **Mapa, Jogo, Loja, Ajuda, Estúdio de fotos e Configurações** em português. A seleção apareceu em mais de uma linha nas capturas da janela. O mecanismo de apresentação registrou um plano em todas as 101 amostras, inclusive as seis após o pedido de pausa. O PR #211 trata a composição de dois planos observada em outra configuração. Nesse ensaio Series X a interface chegou à janela com um único plano. O mapa aberto e o cenário 3D com materiais completos ainda não foram comprovados. A execução terminou com a escrita em zero em `+0x23cf683`.
 
 Ao reiniciar com o mesmo binário e cache aquecido, a janela exibiu o letreiro e voltou ao preto. Foram enviados dois pedidos de pausa com durações diferentes, e a execução terminou com dispositivo removido, motivo DXGI 0x887A0006, após 21 listas. A leitura ao vivo de quatro endereços apontados por vistas de UI encontrou dados diferentes de zero em duas regiões BC3/BC7 e apenas zeros nos primeiros 1.024 bytes de outras duas texturas BC7. Isso identifica dados de origem no momento da leitura. Ainda falta comprovar o texel amostrado naquele desenho. A visibilidade do menu é intermitente.
 
-O binário desse ensaio tem SHA-256 `35afd62ae3b8c0d77a65ee56a346f53ae044649b6ead53f9f2f52306d32f574a`. Os dois shaders texturizados de UI geraram o mesmo DXIL por BLAKE3. Entre as vistas que o jogo forneceu, o texto usou um atlas A8 de 2048 × 2048. O shader `fb0b42420f99e5e7` lê o canal alfa da amostra e o multiplica pelo alfa de entrada. Um desenho de interface usou BC7 UNORM de 260 × 256, layout `0x105`, no slot 587151. O DXIL, as texturas e as imagens da janela ficam no laboratório. A sonda imprime tamanho, formato, slots e planos com `VICTORY_PASS_TRACE=1`. [Adaptação e rastreio](../patches/vistas-e-pausa-876.patch) · [PR #876](https://github.com/Marvisak/VIctory/pull/876).
+O binário desse ensaio tem SHA-256 `35afd62ae3b8c0d77a65ee56a346f53ae044649b6ead53f9f2f52306d32f574a`. Os dois shaders texturizados de UI geraram o mesmo DXIL por BLAKE3. Entre as vistas que o jogo forneceu, o texto usou um atlas A8 de 2048 × 2048. O shader `fb0b42420f99e5e7` lê o canal alfa da amostra e o multiplica pelo alfa de entrada. Um desenho de interface usou BC7 UNORM de 260 × 256, layout `0x105`, no slot 587151. O DXIL, as texturas e as imagens da janela ficam no laboratório. A sonda imprime tamanho, formato, slots e planos com `VICTORY_PASS_TRACE=1`. [Adaptação e rastreio](../patches/vistas-e-pausa-876.patch) · [Issue #876](https://github.com/Marvisak/VIctory/issues/876).
 
 ## Textura que chega após o descritor
 
@@ -62,7 +62,48 @@ Acione Start/Esc ao primeiro letreiro da missão. O log usa `pass list submitted
 
 - **Loader e CPU.** O endereço `+0x4ecc84a` da captura da issue #1 contém `CLWB [r9]`. O upstream já trata o loop. As variantes Execucao e SondaMateriais levam o backport, com testes de comprimento, reconhecimento do loop e fim de página com página seguinte inacessível. Recompile e verifique no computador afetado se a inicialização passa do endereço. [Issue #1](https://github.com/luiksksk/gta6-victory-rtx3060/issues/1) · [PR #45 integrado](https://github.com/Marvisak/VIctory/pull/45) · [Mesmo endereço no upstream](https://github.com/Marvisak/VIctory/issues/210) · [Decodificação no limite da página](https://github.com/Marvisak/VIctory/commit/60d2cf9cbcf5a2abc773d5de10c3c892e77d3340).
 - **Interface e composição.** Em `queue.rs::present`, conte os planos passados a PresentX. Em `draw.rs::draw_indexed`, associe os três hashes de UI ao atlas SRV, ao RTV, ao alpha e à lista/fence. Leia o mesmo pixel dentro de um glifo antes e depois do desenho e na composição 4K. Critério de aceitação: mapa e abas legíveis, navegação e retorno à cena no Series X com a saída nativa. [PR #211](https://github.com/Marvisak/VIctory/pull/211) · [Issue #850](https://github.com/Marvisak/VIctory/issues/850).
-- **Materiais e iluminação.** Preserve os slots vazios quando testar `draw.rs::set_targets`. Em uma passagem que realmente escreve a cor, correlacione recurso, índice de descritor, mip residente, UV e texel com MRT0/MRT1. Para HDR, confira o produtor dos argumentos indiretos e a fence consumidora. A captura histórica de `731a391…` retornou `[0,1,1]`; os próximos alvos são `df11dcd012cd7382`, `5970ee6dbc47ec61` e `4f4ec7b16673362f`. O PR #876 trata vistas typeless. Três testes locais passaram para a adaptação, mas outros testadores ainda veem preto com esse PR. [PR #876](https://github.com/Marvisak/VIctory/pull/876) · [Reteste da issue #850](https://github.com/Marvisak/VIctory/issues/850#issuecomment-7136455781).
+- **Materiais e iluminação.** Preserve os slots vazios quando testar `draw.rs::set_targets`. Em uma passagem que realmente escreve a cor, correlacione recurso, índice de descritor, mip residente, UV e texel com MRT0/MRT1. Para HDR, confira o produtor dos argumentos indiretos e a fence consumidora. A captura histórica de `731a391…` retornou `[0,1,1]`; os próximos alvos são `df11dcd012cd7382`, `5970ee6dbc47ec61` e `4f4ec7b16673362f`. A issue #876 trata vistas typeless. Três testes locais passaram para a adaptação, mas outros testadores ainda veem preto com essa mudança. [Issue #876](https://github.com/Marvisak/VIctory/issues/876) · [Reteste da issue #850](https://github.com/Marvisak/VIctory/issues/850#issuecomment-7136455781).
 - **Estabilidade.** Os dois controles de cor terminaram com escrita em zero em `+0x23cf683`, seguindo por `+0x2215c35` e `+0x2215eca` na pilha. A pausa nativa terminou com remoção do dispositivo após sete listas, motivo DXGI `0x887A0006`, sem breadcrumb recuperável. O caso histórico de DispatchMesh parou no marcador 8/83, com outros dispatches entre as mesmas barreiras. Colete a pilha da falha de CPU separadamente do DRED, do último lote e dos argumentos da GPU. [Falha de GPU em outra NVIDIA](https://github.com/Marvisak/VIctory/issues/1062) · [Root SRVs fora dos limites em outra máquina](https://github.com/Marvisak/VIctory/issues/951).
 
 Os tempos de CPU, as esperas por fence e o ensaio de offload estão na [medição de uploads e ocupação da RTX](cpu-gpu-e-uploads.md).
+
+## Teste de cor da cena na saída nativa (Series X)
+
+A sonda opcional `VICTORY_PAUSE_SCENE=1` guarda na GPU uma cópia independente do alvo de cor RGBA8 typeless de 2560×1440 usado no último quadro com malhas. A cópia permanece disponível nos quadros de interface. O pixel shader de upscale `4f4ec7b16673362f` recebe essa cor no SRV da tabela 1, deslocamento zero. A entrada normal observada foi uma textura de 2560×1440 no formato DXGI 24, e a saída foi 3840×2160. O título continua fazendo os desenhos posteriores da interface. A opção escolhe um alvo por dimensões, formato e ordem de uso. Ainda precisa validar a cor desse alvo quando o título o limpa ou reaproveita.
+
+No controle, o Start abriu o menu em português e Down mudou a seleção de Mapa para Jogo sobre fundo preto. Entre 8 e 43 segundos após o pedido, o rastreio contou zero comandos de malha, 214 desenhos de upscale e 1.284 desenhos com o shader de texto `fb0b42420f99e5e7`. Na primeira execução da sonda, a janela mostrou em movimento uma personagem de roupa cinza e braços em cor de pele, outra figura de roupa azul-escura e fundo preto. Após o primeiro Start, houve 951 comandos de malha e nenhum desenho com o shader de texto nesse mesmo intervalo. O processo terminou após 14 listas com razão de remoção `0x887A0006`. No primeiro reinício com o mesmo executável, apareceram o letreiro e elementos de HUD, incluindo o minimapa. O menu sobre a personagem ainda precisava de confirmação ao final dessas duas execuções.
+
+Para reproduzir com uma instalação e um perfil já configurados, na pasta do manual:
+
+~~~powershell
+.\VIctory.ps1 -Acao Compilar -Variante SondaMateriais
+$env:VICTORY_PRESENT_TARGET = 'nativo'
+$env:VICTORY_PAUSE_SCENE = '1'
+$env:VICTORY_PASS_TRACE = '1'
+.\VIctory.ps1 -Acao Executar -Variante SondaMateriais -PastaJogo $jogo -Console series-x
+~~~
+
+Defina `$jogo` com a pasta da instalação. Na primeira personagem, pressione Start (Esc), mude a seleção com o direcional e saia da pausa. Use `VICTORY_PAUSE_SCENE=0` no ensaio de controle. Os marcadores `saved mesh colour for the native upscaler` e `bound mesh colour to native upscale s1+0` registram a primeira cópia e a primeira ligação da textura. Valide a imagem na janela.
+
+Árvore da variante `23b679fd945e5e36789b7b667478ca26f1b86540`. SHA-256 do executável local `bc80662f2d0d1355272c4140f0645fff0bb551412313fe4a14f78dce487cb892`. A cadeia completa de patches reproduziu a árvore a partir de `97c78d10`. Os 60 testes de `victory-gpu` passaram no Windows com a fixture de assinatura D3D12 da suíte. A tradução ficou em 24.892 de 25.985 contêineres. [Patch da sonda](../patches/cena-na-pausa.patch).
+
+
+No ensaio acionado no nono quadro com malhas, a janela mostrou a personagem de roupa escura e braço em tom de pele atrás do painel em português. Mapa apareceu selecionado e mudou para Jogo após Down. Na região de 190 × 294 pixels à direita do painel, a imagem RGB da personagem foi idêntica nas duas seleções. Depois do segundo Start, o painel desapareceu e a personagem voltou a ocupar a janela. A iluminação e o cenário permaneceram incompletos. O número nove identifica o ponto reproduzido nessa instalação.
+
+Para acionar o controle na mesma etapa com o lançador público numa instalação própria, use uma pasta nova para `console.log` e `teclas.txt`. No processo do jogo, defina `VICTORY_PASS_TRACE=1` e `VICTORY_LIVE_KEYS` para o caminho absoluto de `teclas.txt`, e grave a saída em `console.log`. Antes das malhas, abra outro PowerShell nessa pasta. O trecho abaixo conta números de quadro distintos com pelo menos uma malha registrada em lista submetida. Ao alcançar nove, envia Start, Down e Start. Feche o observador com Ctrl+C caso o título termine antes.
+
+~~~powershell
+$quadros = [Collections.Generic.HashSet[long]]::new()
+$enviado = $false
+Get-Content -LiteralPath .\console.log -Wait | ForEach-Object {
+    if (!$enviado -and $_ -match 'pass list submitted' -and $_ -match 'mesh true \[' -and $_ -match '\bframe=(\d+)') {
+        [void]$quadros.Add([long]$Matches[1])
+        if ($quadros.Count -eq 9) {
+            [IO.File]::WriteAllText((Join-Path (Get-Location).Path 'teclas.txt'), '0:Esc:1.8,24:Down:0.55,48:Esc:1.8')
+            $enviado = $true
+        }
+    }
+}
+~~~
+
+No reinício com o mesmo gatilho e binário, o enquadramento mostrou o braço entrando pela esquerda. O contorno continuou visível através do painel entre Mapa e Loja e reapareceu sem o painel depois do segundo Start. Entre 20 e 46 segundos após a entrada, as duas reproduções tiveram zero comandos de malha, respectivamente 750 e 876 desenhos com o shader de texto. Entre 54 e 67 segundos, já fora do menu, voltaram a emitir 2.670 e 3.820 comandos de malha. As medianas das amostras do runtime durante essa janela da pausa foram 195,1 ms no controle (5 amostras), 206,6 ms na primeira reprodução (5) e 169,75 ms no reinício (4). A variação entre execuções limita qualquer conclusão sobre desempenho. Cada cópia elegível guarda 14.745.600 bytes de cor na GPU. A sonda continua opcional.
