@@ -1,6 +1,6 @@
 # VIctory na RTX 3060
 
-**Primeira vez?** O [manual de instalação e uso](MANUAL.md) acompanha a compilação no Windows e o primeiro início com uma instalação completa do jogo. A primeira cutscene ainda aparece escura na RTX 3060. A [atualização dos testes](docs/diagnostico-rtx3060.md) mostra onde a cor se perde e quanto trabalho chega à GPU.
+O manual explica como compilar no Windows e iniciar com sua instalação completa do jogo. A variante experimental `CoresPlanas` mostrou parte da rua durante a abertura na RTX 3060. A primeira cutscene com texturas e iluminação completas continua em investigação. [Manual de instalação e uso](MANUAL.md) · [Medições da CPU e da GPU](docs/diagnostico-rtx3060.md)
 
 Scripts para compilar o VIctory no Windows e iniciar a instalação local de GTA VI para Xbox. As variantes de execução e diagnóstico originais usam a revisão `015d45bf`. A sonda HDR usa a revisão `35b054ec`. O Cargo gera o executável na máquina de quem for usar. Os arquivos do jogo vêm da própria instalação. [Base de execução](https://github.com/Marvisak/VIctory/tree/015d45bfff4d82e7afad89afe10dd24e5a402ef8) · [Base da sonda](https://github.com/Marvisak/VIctory/tree/35b054ec038c11bc8a0de66b1eee764b1ad4f101)
 

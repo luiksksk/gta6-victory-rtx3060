@@ -143,9 +143,12 @@ if ($Acao -eq 'Compilar') {
             $dxc = Get-Command dxc.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($dxc) { $env:VICTORY_GEOMETRIA_DXC = $dxc.Source }
             else {
-                $kits = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -ErrorAction SilentlyContinue).KitsRoot10
-                if (!$kits) { $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10' }
-                $sdk = Get-ChildItem -Path (Join-Path $kits 'bin\*\x64\dxc.exe') -ErrorAction SilentlyContinue |
+                $registrado = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -ErrorAction SilentlyContinue).KitsRoot10
+                $kits = @($registrado, (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10')) | Where-Object { $_ } | Select-Object -Unique
+                $compiladores = foreach ($pasta in $kits) {
+                    Get-ChildItem -Path (Join-Path $pasta 'bin\*\x64\dxc.exe') -File -ErrorAction SilentlyContinue
+                }
+                $sdk = $compiladores | Where-Object { $_.Directory.Parent.Name -match '^\d+(\.\d+){1,3}$' } |
                     Sort-Object { [version]$_.Directory.Parent.Name } -Descending | Select-Object -First 1
                 if (!$sdk) { throw 'A variante CoresPlanas requer dxc.exe do Windows SDK. Instale o SDK ou indique o caminho em VICTORY_GEOMETRIA_DXC.' }
                 $env:VICTORY_GEOMETRIA_DXC = $sdk.FullName

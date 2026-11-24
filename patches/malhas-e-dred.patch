@@ -1,0 +1,64 @@
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -1609,13 +1679,15 @@ fn in_flight(history: &[D3D12_AUTO_BREADCRUMB_OP], markers: &[(u32, String)], do
+         .position(barrier)
+         .map_or(history.len(), |b| (done + b).max(done + 1));
+     let mut text = format!(", commands {from}..{to} between its barriers:");
+-    let mut shown = 0;
+-    for i in from..to {
++    // Show the operations nearest the reported stop even in long runs of meshes.
++    let mut ops: Vec<_> = (from..to)
++        .filter(|&i| history[i] != D3D12_AUTO_BREADCRUMB_OP_SETMARKER)
++        .collect();
++    ops.sort_by_key(|i| i.abs_diff(done));
++    ops.truncate(12);
++    ops.sort_unstable();
++    for i in ops {
+         let op = history[i];
+-        if op == D3D12_AUTO_BREADCRUMB_OP_SETMARKER || shown == 12 {
+-            continue;
+-        }
+-        shown += 1;
+         let marker = i
+             .checked_sub(1)
+             .filter(|&m| history[m] == D3D12_AUTO_BREADCRUMB_OP_SETMARKER)
+diff --git a/crates/victory-shader/src/emit/lower.rs b/crates/victory-shader/src/emit/lower.rs
+--- a/crates/victory-shader/src/emit/lower.rs
++++ b/crates/victory-shader/src/emit/lower.rs
+@@ -6220,7 +6234,8 @@ impl<'a> Lower<'a> {
+         }
+         // A mesh lane writes its own vertex or primitive, where it exports.
+         let at = if mesh {
+-            self.begin_guarded(guard)
++            let active = self.mesh_output_guard(primitive, guard);
++            self.begin_guarded(active)
+         } else {
+             None
+         };
+@@ -6280,11 +6295,25 @@ impl<'a> Lower<'a> {
+         Ok(())
+     }
+ 
++    /// A console export may be active in lanes beyond the declared DXIL output.
++    fn mesh_output_guard(&mut self, primitive: bool, guard: Option<V>) -> Option<V> {
++        let mesh = self.s.mesh.expect("mesh export");
++        let limit = if primitive { mesh.max_primitives } else { mesh.max_vertices };
++        if self.s.threads.expect("mesh threads")[0] <= limit {
++            return guard;
++        }
++        let flat = self.mesh_thread();
++        let limit = self.s.m.i32(limit);
++        let within = self.s.m.cmp(self.cur, pred::IULT, flat, limit);
++        Some(guard.map_or(within, |g| self.s.m.bin(self.cur, Bin::And, g, within)))
++    }
++
+     /// Mesh: `exp prim` as the lane's primitive. Bit 31 culls it (all
+     /// indices 0: no area).
+     fn emit_indices(&mut self, e: &Export, guard: Option<V>) -> Result<(), Why> {
+         let v = e.values[0].ok_or("a primitive export without its indices")?;
+         let x = self.i32_of(v)?;
++        let guard = self.mesh_output_guard(true, guard);
+         let at = self.begin_guarded(guard);
+         let c = self.cur;
+         let z = self.s.m.i32(0);
