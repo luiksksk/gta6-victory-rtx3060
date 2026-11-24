@@ -10,6 +10,7 @@
 !/docs/medicoes-rtx3060.json
 !/docs/shaders-e-wave64.md
 !/docs/geometria-e-wave64.md
+!/docs/pipelines-geometria.txt
 !/docs/shaders-primeira-missao.csv
 !/docs/shaders-eventos-30s.csv
 !/docs/shaders-validacao-e-pipelines.csv
@@ -24,3 +25,4 @@
 !/patches/sonda-hdr-35b054ec.patch
 !/patches/readback-35b054ec.patch
 !/patches/preparacao-shaders.patch
+!/patches/geometria-97c78d10.patch

@@ -3,7 +3,7 @@
 param(
     [ValidateSet('Compilar','Executar','Config','PrepararShaders')]
     [string]$Acao = 'Executar',
-    [ValidateSet('Execucao','Diagnostico','SondaHDR')]
+    [ValidateSet('Execucao','Diagnostico','SondaHDR','Geometria')]
     [string]$Variante = 'Execucao',
     [string]$PastaJogo,
     [string]$PerfilOrigem,
@@ -17,14 +17,17 @@ $arvores = @{
     Execucao = '242c34f77aa8990cc66ac8fdfca43085c2c0fa69'
     Diagnostico = 'b080813ecbfda50f7921dce366063b3a2ff974b2'
     SondaHDR = 'e3a6fc73fdd78b4d0d8a1e74d979f029b60e40a8'
+    Geometria = '85ae3d3dc2cb0770950a3c5cccaf78d694af3f98'
 }
 # PowerShell accepts case-insensitive parameter values. Keep paths canonical.
 $tipo = switch ($Variante) {
     'Diagnostico' { 'Diagnostico' }
     'SondaHDR' { 'SondaHDR' }
+    'Geometria' { 'Geometria' }
     default { 'Execucao' }
 }
 if ($tipo -eq 'SondaHDR') { $base = '35b054ec038c11bc8a0de66b1eee764b1ad4f101' }
+if ($tipo -eq 'Geometria') { $base = '97c78d1087808bd6ce5eabb5d566083a38406a90' }
 $arvore = $arvores[$tipo]
 $raiz = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'VIctory-RTX3060-Publico'
 $fontes = Join-Path $raiz 'fontes'
@@ -62,6 +65,7 @@ function Get-PatchedSource {
             Invoke-Git @('-C',$tmp,'fetch','--quiet','--depth=1','https://github.com/Marvisak/VIctory.git',$base)
             Invoke-Git @('-C',$tmp,'checkout','--quiet','--detach','FETCH_HEAD')
             $patches = switch ($tipo) {
+                'Geometria' { 'geometria-97c78d10.patch' }
                 'SondaHDR' { 'sonda-hdr-35b054ec.patch' }
                 'Diagnostico' { 'execucao-rtx3060.patch'; 'diagnostico-cena.patch' }
                 default { 'execucao-rtx3060.patch' }
@@ -162,6 +166,14 @@ if ($tipo -eq 'Execucao') {
     $config['VICTORY_LIVE_KEYS'] = $null
 }
 $anterior = @{}
+if ($tipo -eq 'Geometria') {
+    $config['VICTORY_LOW_VA_MIB'] = '512'
+    $config['VICTORY_PREWARM_LOG'] = Join-Path (Join-Path $PSScriptRoot 'docs') 'pipelines-geometria.txt'
+    $config['VICTORY_PRESENT_TARGET'] = if ($env:VICTORY_PRESENT_TARGET) { $env:VICTORY_PRESENT_TARGET } else { '2560x1440:28:0' }
+    $config['VICTORY_EXPAND_SCENE_HDR'] = '1'
+    $config['VICTORY_INDIRECT'] = '1'
+    $config['VICTORY_INDIRECT_AFTER_MESH_FRAMES'] = '90'
+}
 foreach ($nome in $config.Keys) { $anterior[$nome] = [Environment]::GetEnvironmentVariable($nome) }
 function Set-ProcessEnvironment([string]$Nome, $Valor) {
     if ($null -eq $Valor) {

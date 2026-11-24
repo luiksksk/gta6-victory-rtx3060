@@ -59,6 +59,25 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\VIctory.ps1 -Aca
 .\Iniciar-VIctory.cmd -Variante Diagnostico -PastaJogo "D:\Jogos\GTA VI"
 ```
 
+## Ver a geometria da cena
+
+A variante experimental `Geometria` mostrou uma figura humana, fios e estruturas da rua na RTX 3060 de 12 GB. O modo testado foi **Series X**. A abertura e os menus usam a apresentação normal. Quando começam os desenhos de malha, a janela passa a mostrar uma das superfícies de cor do jogo. Ainda há quadros pretos e o driver pode encerrar a execução antes do pátio.
+
+1. Na pasta deste repositório, compile a variante e espere a mensagem de conclusão.
+
+   ```powershell
+   .\VIctory.ps1 -Acao Compilar -Variante Geometria
+   ```
+
+2. Inicie com a pasta da sua instalação completa. A porcentagem indica quanto do catálogo de shaders foi processado. Ao chegar a 100%, o lançador mostra os totais prontos e incompatíveis e abre o jogo.
+
+   ```powershell
+   .\Iniciar-VIctory.cmd -Variante Geometria -Console series-x -PastaJogo "D:\Jogos\GTA VI"
+   ```
+
+3. Para começar com um perfil configurado, acrescente `-PerfilOrigem "D:\Perfis\VIctory\data"` na primeira execução. Use os controles habituais para entrar na missão. A lista de pipelines observados acompanha o repositório e contém somente identificadores. Os shaders são lidos na sua instalação.
+
+
 ## Se algo impedir o início
 
 | O que apareceu | O que fazer |
