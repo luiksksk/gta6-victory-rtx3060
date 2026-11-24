@@ -32,7 +32,7 @@ O script busca o commit exato do VIctory, aplica o patch, confere a árvore Git 
 
 Ao iniciar, o lançador aguarda a pré-compilação dos shaders identificáveis na instalação. O terminal mostra a porcentagem e quantos shaders o VIctory traduziu ou rejeitou. Na v1.0.2.1, a variante padrão traduziu 22.160 dos 25.985 shaders. O cache fica na máquina do usuário. [Como funciona a preparação](MANUAL.md#3-abra-o-jogo)
 
-Nos 30 segundos após a legenda de localização, os descartes da primeira missão citaram 76 shaders por hash. A investigação também identificou a que correspondem os números 2400, 2401 e 2402 nas duas contagens do arquivo. [Resultados na RTX 3060](docs/shaders-e-wave64.md) · [Lista dos 76 shaders](docs/shaders-primeira-missao.csv)
+Nos 30 segundos após a legenda de localização, os erros e descartes da primeira missão citaram 239 shaders por hash. Para 76 deles, o relatório registrou chamadas descartadas por quadro. A investigação também identificou a que correspondem os números 2400, 2401 e 2402 nas duas contagens do arquivo. [Resultados na RTX 3060](docs/shaders-e-wave64.md) · [Lista dos 239 shaders](docs/shaders-eventos-30s.csv)
 
 Aponte o lançador para a pasta que contém `game_scarlett_master.exe`. O caminho abaixo é um exemplo.
 

@@ -50,6 +50,15 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\VIctory.ps1 -Aca
 
 O padrão é o modo Series X. O lançador usa uma pasta própria para o perfil em `%LOCALAPPDATA%\VIctory-RTX3060-Publico\dados\Execucao`. Para abrir de novo, basta usar o mesmo lançador. Para importar uma **cópia** de um perfil que você já usa no VIctory, consulte as [instruções de perfil](README.md#executar).
 
+### Testar a adaptação de Wave64
+
+A variante `Diagnostico` inclui a adaptação testada em 25 shaders de compute. Para experimentá-la, compile essa variante e abra-a com a sua instalação. Ela usa seu próprio perfil e seu próprio cache. Os testes da primeira missão ainda mostraram a cena escura.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\VIctory.ps1 -Acao Compilar -Variante Diagnostico
+.\Iniciar-VIctory.cmd -Variante Diagnostico -PastaJogo "D:\Jogos\GTA VI"
+```
+
 ## Se algo impedir o início
 
 | O que apareceu | O que fazer |

@@ -1,10 +1,12 @@
 # Shaders da primeira missão e Wave64 na RTX 3060
 
-**Em 30 segundos após desaparecer “Vice City, dois anos atrás”, 76 shaders apareceram pelo hash nos registros de chamadas descartadas por falta de pipeline.** Na variante padrão, 65 desses shaders falham na tradução e 11 produzem DXIL que exige Wave64. A primeira cutscene ainda aparece escura. [Lista dos 76 hashes, erros e taxas observadas](shaders-primeira-missao.csv)
+**Nos 30 segundos após desaparecer “Vice City, dois anos atrás”, o VIctory registrou problemas com 239 shaders distintos.** O log identificou 177 falhas de tradução, 18 recusas de pipelines de compute pelo driver e 76 hashes em chamadas descartadas por falta de pipeline. Os grupos se sobrepõem. Na variante padrão, 215 dos 239 falham na tradução e 24 exigem Wave64. A primeira cutscene ainda aparece escura. [Todos os 239 hashes e a evidência de cada um](shaders-eventos-30s.csv)
 
 ## Quais shaders afetam a missão?
 
 O ensaio `argumentos-hdr` usou a sonda sobre a revisão `35b054ec`, o modo Series X e uma RTX 3060 de 12 GB. A captura da janela fornece o instante em que a legenda desapareceu. Para identificar o impedimento de cada shader na versão oferecida para jogar, cruzamos os hashes desse ensaio com o catálogo e os testes da variante `Execucao`, baseada em `015d45bf`. As taxas abaixo são a maior média por quadro que o relatório atribuiu àquele motivo no trecho. O relatório nomeia apenas parte dos descartes.
+
+Dos 76 hashes diretamente citados em descartes de chamadas, 65 falharam na tradução na variante padrão e 11 exigem Wave64. Os demais hashes dos 239 apareceram durante a criação ou tradução de pipelines. Para esses, o log não dá uma taxa de descarte nominal naquele trecho. Ao longo de toda a sessão, houve 315 hashes com falha de tradução e 114 com recusa de pipeline, totalizando 429 distintos. [Os 76 shaders com descartes identificados](shaders-primeira-missao.csv)
 
 | Shader | Trabalho identificado | Impedimento na variante padrão | Maior taxa informada por quadro |
 | --- | --- | --- | ---: |
@@ -13,6 +15,8 @@ O ensaio `argumentos-hdr` usou a sonda sobre a revisão `35b054ec`, o modo Serie
 | `e30970f1727063fd` | Transformação de impostores | O tamanho de cada elemento do buffer estruturado é desconhecido em `0x61c`. | 144 |
 | `321d411b20a35ef9` | Outra malha de profundidade de personagem | A origem do descritor fica indeterminada em `0x2570`. | 122 |
 | `c9da71da40af2e28` | Compute | O DXIL exige uma wave de 64 lanes. A RTX recusou o pipeline. | 48 |
+
+Nos dois shaders de profundidade da tabela, as quatro palavras do descritor chegam por quatro instruções `v_readfirstlane_b32`, que leem registradores vetoriais na primeira lane ativa. O rastreamento da primeira palavra encontrou uma junção entre caminhos de execução. Em um dos caminhos, o valor vem de uma tabela por `s_load_dwordx4` e passa a um registrador vetorial. O tradutor perde essa origem ao reconstruir o descritor para o acesso à malha. Uma correção precisa identificar qual caminho e qual lane fornecem as quatro palavras quando a máscara de execução muda.
 
 Há ainda uma falha medida fora dessa lista. A passagem HDR `731a39171b568298` já tinha pipeline, mas recebeu `[0, 1, 1]` em oito despachos indiretos. Com zero grupos no eixo X, essa passagem não executou trabalho. Para explicar por que chega zero ali, ainda é preciso identificar a escrita no buffer de argumentos que antecede o despacho. [Rastreamento dos pixels até a composição](diagnostico-rtx3060.md#onde-a-imagem-se-perde)
 
@@ -30,6 +34,10 @@ O VIctory registra o hash do conteúdo. O número de ordem depende da ferramenta
 | 2373 | 2402 | `ca4ce120baf69de0` | Shader de malha. Validação e criação de pipeline passaram. |
 
 Os seis programas originais declaram Wave64. Nos quatro que o tradutor aceitou, o DXIL deixou livre a largura da wave. Para o teste gráfico, o shader de pixels complementar era mínimo. O teste verifica a criação do pipeline na placa. Executar o material completo e comparar seus pixels exige outro ensaio. Os hashes da ordem única 2400–2402 não apareceram nos três logs da missão examinados. A ferramenta usada pelos desenvolvedores que citaram os números continua desconhecida.
+
+Uma sonda no tradutor rastreou também a origem da leitura escalar. Nos dois shaders de malha, `s_load_dwordx4` carrega um descritor de quatro palavras. A carga ocorre em `0x2980` no 2401 e em `0x5d4c` no 2402. O VIctory reconhece a origem como uma tabela de recursos, mas perde o valor da **segunda palavra do descritor** ao tratar seus usos por instruções de leitura escalar de buffer. O erro chega à exportação da malha em `0x3144` e `0x6350`, respectivamente. A falha ocorre antes da geração de DXIL.
+
+No caminho de dados dos dois shaders, uma junção de fluxo alimenta a máscara `0x00ff0000`, em `0x2b38` e `0x5ef0`. A descrição estática do recurso informa passo de 100 bytes. Para validar uma correção, é preciso preservar os bits correspondentes do descritor efetivamente vinculado e verificar a saída da malha com valores distintos desse campo.
 
 ## Até onde vai o problema de Wave64?
 
