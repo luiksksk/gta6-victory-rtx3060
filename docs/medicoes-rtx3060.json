@@ -1,0 +1,365 @@
+{
+  "revisao": "35b054ec038c11bc8a0de66b1eee764b1ad4f101",
+  "gpu": "RTX 3060 12 GB",
+  "cpu": "Ryzen 5 5600GT",
+  "console": "Series X",
+  "ensaios": [
+    {
+      "ensaio": "origem-rgb10",
+      "build_sha256": "ed643bd6cba80957fe373f19d84628c23ba554542dcd77dc8415ad088e39df40",
+      "patch_sha256": "25ee02c71871548e37aed835f0478f94262c657b0bee8eb4442ea662f532f831",
+      "exit_hex": "0x887a0005",
+      "janela_s": 30,
+      "janela_iniciada_em": "2026-11-23T22:16:05.976498-03:00",
+      "foto_pos_legenda": 71,
+      "present_ms": {
+        "n": 28,
+        "minimo": 668.661,
+        "mediana": 904.262,
+        "pico": 3303.42,
+        "p95": 1612.353
+      },
+      "motor_3d_processo": {
+        "n": 120,
+        "janela_s": 29.869,
+        "tempo_agendado_s": 4.267614,
+        "percentual": 14.29
+      },
+      "gpu_nvml_placa": {
+        "n": 62,
+        "mediana_percentual": 15.0
+      },
+      "memoria_MiB": {
+        "private_mib": {
+          "n": 62,
+          "minimo": 19407.93,
+          "mediana": 20019.77,
+          "pico": 20794.86,
+          "p95": 20792.002
+        },
+        "vram_dedicated_mib": {
+          "n": 62,
+          "minimo": 8428.1,
+          "mediana": 8559.185,
+          "pico": 8618.9,
+          "p95": 8615.27
+        },
+        "vram_shared_mib": {
+          "n": 62,
+          "minimo": 2653.22,
+          "mediana": 3165.215,
+          "pico": 3799.76,
+          "p95": 3783.73
+        },
+        "ram_free_mib": {
+          "n": 62,
+          "minimo": 2301.85,
+          "mediana": 3366.195,
+          "pico": 3795.68,
+          "p95": 3777.143
+        },
+        "sys_limit_mib": {
+          "n": 62,
+          "minimo": 43822.26,
+          "mediana": 44855.35,
+          "pico": 45885.93,
+          "p95": 45885.93
+        }
+      },
+      "verificacao_de_memoria_no_host": [
+        {
+          "segundo_apos_marco": 0.509,
+          "MB_verificados_por_quadro": 10530.6,
+          "MB_inalterados_por_quadro": 10425.6
+        },
+        {
+          "segundo_apos_marco": 5.773,
+          "MB_verificados_por_quadro": 11707.9,
+          "MB_inalterados_por_quadro": 11644.1
+        },
+        {
+          "segundo_apos_marco": 11.975,
+          "MB_verificados_por_quadro": 11417.1,
+          "MB_inalterados_por_quadro": 11336.6
+        },
+        {
+          "segundo_apos_marco": 16.975,
+          "MB_verificados_por_quadro": 10962.1,
+          "MB_inalterados_por_quadro": 10904.4
+        },
+        {
+          "segundo_apos_marco": 23.846,
+          "MB_verificados_por_quadro": 18722.8,
+          "MB_inalterados_por_quadro": 18412.2
+        }
+      ],
+      "deltas_contadores_victory": {
+        "janela_s": 28.868,
+        "missing_draw": 4267,
+        "missing_mesh": 37003,
+        "missing_compute": 68557,
+        "worker": {
+          "chamadas": 72,
+          "falhas": 0,
+          "tempo_acumulado_s": 176.19
+        },
+        "translate": {
+          "chamadas": 72,
+          "falhas": 0,
+          "tempo_acumulado_s": 3.613
+        },
+        "pso_create": {
+          "chamadas": 72,
+          "falhas": 0,
+          "tempo_acumulado_s": 172.242
+        },
+        "pso_load": {
+          "chamadas": 72,
+          "falhas": 72,
+          "tempo_acumulado_s": 0.002
+        }
+      }
+    },
+    {
+      "ensaio": "produtores-prontos",
+      "build_sha256": "beae9369532bebb25c433e32da8ce61a51896372268488d0aa5641ad48cbb579",
+      "patch_sha256": "3cc617ec06f89c4d3e8b5eb226e5bebce7adaf33e510fa7a5077a22b31fa97be",
+      "exit_hex": "0x00000000",
+      "janela_s": 30,
+      "janela_iniciada_em": "2026-11-23T22:22:04.085341-03:00",
+      "foto_pos_legenda": 48,
+      "present_ms": {
+        "n": 20,
+        "minimo": 870.506,
+        "mediana": 1346.37,
+        "pico": 1835.206,
+        "p95": 1707.667
+      },
+      "motor_3d_processo": {
+        "n": 119,
+        "janela_s": 29.713,
+        "tempo_agendado_s": 5.897012,
+        "percentual": 19.85
+      },
+      "gpu_nvml_placa": {
+        "n": 62,
+        "mediana_percentual": 10.5
+      },
+      "memoria_MiB": {
+        "private_mib": {
+          "n": 62,
+          "minimo": 20661.4,
+          "mediana": 21246.165,
+          "pico": 21725.0,
+          "p95": 21577.398
+        },
+        "vram_dedicated_mib": {
+          "n": 62,
+          "minimo": 8539.09,
+          "mediana": 9236.89,
+          "pico": 9288.29,
+          "p95": 9278.608
+        },
+        "vram_shared_mib": {
+          "n": 62,
+          "minimo": 3265.45,
+          "mediana": 3728.49,
+          "pico": 4133.38,
+          "p95": 4101.25
+        },
+        "ram_free_mib": {
+          "n": 62,
+          "minimo": 2527.59,
+          "mediana": 2888.475,
+          "pico": 3561.96,
+          "p95": 3452.81
+        },
+        "sys_limit_mib": {
+          "n": 62,
+          "minimo": 44849.36,
+          "mediana": 45884.94,
+          "pico": 45884.94,
+          "p95": 45884.94
+        }
+      },
+      "verificacao_de_memoria_no_host": [
+        {
+          "segundo_apos_marco": 2.306,
+          "MB_verificados_por_quadro": 18386.2,
+          "MB_inalterados_por_quadro": 18013.2
+        },
+        {
+          "segundo_apos_marco": 7.613,
+          "MB_verificados_por_quadro": 19947.1,
+          "MB_inalterados_por_quadro": 19613.5
+        },
+        {
+          "segundo_apos_marco": 14.373,
+          "MB_verificados_por_quadro": 12659.5,
+          "MB_inalterados_por_quadro": 12422.9
+        },
+        {
+          "segundo_apos_marco": 20.273,
+          "MB_verificados_por_quadro": 29145.2,
+          "MB_inalterados_por_quadro": 28437.1
+        },
+        {
+          "segundo_apos_marco": 26.242,
+          "MB_verificados_por_quadro": 28373.7,
+          "MB_inalterados_por_quadro": 27628.5
+        }
+      ],
+      "deltas_contadores_victory": {
+        "janela_s": 26.903,
+        "missing_draw": 1718,
+        "missing_mesh": 11798,
+        "missing_compute": 34813,
+        "worker": {
+          "chamadas": 361,
+          "falhas": 127,
+          "tempo_acumulado_s": 156.55
+        },
+        "translate": {
+          "chamadas": 412,
+          "falhas": 107,
+          "tempo_acumulado_s": 142.491
+        },
+        "pso_create": {
+          "chamadas": 234,
+          "falhas": 18,
+          "tempo_acumulado_s": 12.295
+        },
+        "pso_load": {
+          "chamadas": 252,
+          "falhas": 234,
+          "tempo_acumulado_s": 0.01
+        }
+      }
+    },
+    {
+      "ensaio": "argumentos-hdr",
+      "build_sha256": "b877aaf4dc5cb0cf252174d14b35f38cb969056db1882c966d2030ad15f85c75",
+      "patch_sha256": "cb98420acf7efaa514b8b22e967bf5545530bf7e00d83a1a51d0682700ff60ae",
+      "exit_hex": "0x00000000",
+      "janela_s": 30,
+      "janela_iniciada_em": "2026-11-23T22:27:26.338751-03:00",
+      "foto_pos_legenda": 69,
+      "present_ms": {
+        "n": 19,
+        "minimo": 1005.02,
+        "mediana": 1400.382,
+        "pico": 2332.425,
+        "p95": 2302.74
+      },
+      "motor_3d_processo": {
+        "n": 119,
+        "janela_s": 29.661,
+        "tempo_agendado_s": 3.67703,
+        "percentual": 12.4
+      },
+      "gpu_nvml_placa": {
+        "n": 63,
+        "mediana_percentual": 21.0
+      },
+      "memoria_MiB": {
+        "private_mib": {
+          "n": 62,
+          "minimo": 19670.57,
+          "mediana": 21021.445,
+          "pico": 21878.77,
+          "p95": 21750.049
+        },
+        "vram_dedicated_mib": {
+          "n": 62,
+          "minimo": 8568.41,
+          "mediana": 8796.715,
+          "pico": 8924.99,
+          "p95": 8907.977
+        },
+        "vram_shared_mib": {
+          "n": 62,
+          "minimo": 2715.81,
+          "mediana": 3763.075,
+          "pico": 4270.74,
+          "p95": 4246.68
+        },
+        "ram_free_mib": {
+          "n": 62,
+          "minimo": 1508.37,
+          "mediana": 2672.095,
+          "pico": 3545.42,
+          "p95": 3338.866
+        },
+        "sys_limit_mib": {
+          "n": 62,
+          "minimo": 43835.4,
+          "mediana": 45934.52,
+          "pico": 46973.18,
+          "p95": 46973.18
+        }
+      },
+      "cpu_processo": {
+        "n": 60,
+        "janela_s": 29.558,
+        "usuario_s": 158.4531,
+        "kernel_s": 42.9688,
+        "processadores_logicos": 12,
+        "equivalentes_ocupados": 6.814,
+        "percentual_maquina": 56.79
+      },
+      "verificacao_de_memoria_no_host": [
+        {
+          "segundo_apos_marco": 2.222,
+          "MB_verificados_por_quadro": 16749.7,
+          "MB_inalterados_por_quadro": 16538.7
+        },
+        {
+          "segundo_apos_marco": 8.272,
+          "MB_verificados_por_quadro": 23851.2,
+          "MB_inalterados_por_quadro": 23571.5
+        },
+        {
+          "segundo_apos_marco": 13.855,
+          "MB_verificados_por_quadro": 27757.5,
+          "MB_inalterados_por_quadro": 27297.3
+        },
+        {
+          "segundo_apos_marco": 19.055,
+          "MB_verificados_por_quadro": 19483.0,
+          "MB_inalterados_por_quadro": 18855.9
+        },
+        {
+          "segundo_apos_marco": 25.62,
+          "MB_verificados_por_quadro": 28926.2,
+          "MB_inalterados_por_quadro": 28254.0
+        }
+      ],
+      "deltas_contadores_victory": {
+        "janela_s": 28.963,
+        "missing_draw": 1498,
+        "missing_mesh": 12176,
+        "missing_compute": 36794,
+        "worker": {
+          "chamadas": 457,
+          "falhas": 181,
+          "tempo_acumulado_s": 169.697
+        },
+        "translate": {
+          "chamadas": 567,
+          "falhas": 167,
+          "tempo_acumulado_s": 163.547
+        },
+        "pso_create": {
+          "chamadas": 237,
+          "falhas": 13,
+          "tempo_acumulado_s": 4.433
+        },
+        "pso_load": {
+          "chamadas": 284,
+          "falhas": 232,
+          "tempo_acumulado_s": 0.01
+        }
+      }
+    }
+  ]
+}

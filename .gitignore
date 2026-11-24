@@ -3,6 +3,11 @@
 !/.gitattributes
 !/.gitignore
 !/README.md
+!/MANUAL.md
+!/docs/
+/docs/*
+!/docs/diagnostico-rtx3060.md
+!/docs/medicoes-rtx3060.json
 !/LICENSE
 !/VIctory.ps1
 !/Iniciar-VIctory.cmd
@@ -10,3 +15,5 @@
 /patches/*
 !/patches/execucao-rtx3060.patch
 !/patches/diagnostico-cena.patch
+!/patches/sonda-hdr-35b054ec.patch
+!/patches/readback-35b054ec.patch

@@ -1,6 +1,8 @@
 # VIctory na RTX 3060
 
-Scripts para compilar o VIctory no Windows e iniciar a instalação local de GTA VI para Xbox. O pacote reúne o lançador e dois patches sobre a revisão `015d45bf` do emulador. O Cargo gera o executável na máquina de quem for usar. Os arquivos do jogo vêm da própria instalação. [Código-fonte original da revisão utilizada](https://github.com/Marvisak/VIctory/tree/015d45bfff4d82e7afad89afe10dd24e5a402ef8)
+**Primeira vez?** O [manual de instalação e uso](MANUAL.md) acompanha a compilação no Windows e o primeiro início com uma instalação completa do jogo. A primeira cutscene ainda aparece escura na RTX 3060. A [atualização dos testes](docs/diagnostico-rtx3060.md) mostra onde a cor se perde e quanto trabalho chega à GPU.
+
+Scripts para compilar o VIctory no Windows e iniciar a instalação local de GTA VI para Xbox. As variantes de execução e diagnóstico originais usam a revisão `015d45bf`. A sonda HDR usa a revisão `35b054ec`. O Cargo gera o executável na máquina de quem for usar. Os arquivos do jogo vêm da própria instalação. [Base de execução](https://github.com/Marvisak/VIctory/tree/015d45bfff4d82e7afad89afe10dd24e5a402ef8) · [Base da sonda](https://github.com/Marvisak/VIctory/tree/35b054ec038c11bc8a0de66b1eee764b1ad4f101)
 
 ## Até onde o jogo chegou
 
@@ -10,6 +12,7 @@ Com GTA VI para Xbox v1.0.2.1 e uma GeForce RTX 3060 de 12 GB, a correção elim
 | --- | --- |
 | `Execucao` | Corrige a tabela de descritores compartilhada pelos shaders. Foi a variante usada para registrar os créditos e o áudio da introdução. |
 | `Diagnostico` | Acrescenta tradução de um subconjunto de operações wave64, pré-compilação de pipelines observados e captura dos primeiros quadros com malhas 3D. A RTX aceitou três shaders adicionais. Os 28 primeiros quadros 3D capturados no modo Series X continuaram escuros. |
+| `SondaHDR` | Variante de investigação sobre `35b054ec`. Mede as texturas HDR, os argumentos de compute e a composição nos quadros após o letreiro. [Instruções para reproduzir](docs/diagnostico-rtx3060.md#reproduzir-a-sonda) |
 
 ## Compilar
 

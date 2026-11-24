@@ -3,7 +3,7 @@
 param(
     [ValidateSet('Compilar','Executar','Config')]
     [string]$Acao = 'Executar',
-    [ValidateSet('Execucao','Diagnostico')]
+    [ValidateSet('Execucao','Diagnostico','SondaHDR')]
     [string]$Variante = 'Execucao',
     [string]$PastaJogo,
     [string]$PerfilOrigem,
@@ -16,9 +16,15 @@ $base = '015d45bfff4d82e7afad89afe10dd24e5a402ef8'
 $arvores = @{
     Execucao = '5cbdcebfd72456bf885d9f0bf1a713424c7b951b'
     Diagnostico = '78f8c7a553a8cd0cd5fd1a3af3a95821e8a6b702'
+    SondaHDR = '8c225469301e8460fab0667dde27a2d1a64f54d1'
 }
 # PowerShell accepts case-insensitive parameter values. Keep paths canonical.
-$tipo = if ($Variante -eq 'Diagnostico') { 'Diagnostico' } else { 'Execucao' }
+$tipo = switch ($Variante) {
+    'Diagnostico' { 'Diagnostico' }
+    'SondaHDR' { 'SondaHDR' }
+    default { 'Execucao' }
+}
+if ($tipo -eq 'SondaHDR') { $base = '35b054ec038c11bc8a0de66b1eee764b1ad4f101' }
 $arvore = $arvores[$tipo]
 $raiz = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'VIctory-RTX3060-Publico'
 $fontes = Join-Path $raiz 'fontes'
@@ -55,8 +61,11 @@ function Get-PatchedSource {
             Invoke-Git @('-C',$tmp,'config','core.autocrlf','false')
             Invoke-Git @('-C',$tmp,'fetch','--quiet','--depth=1','https://github.com/Marvisak/VIctory.git',$base)
             Invoke-Git @('-C',$tmp,'checkout','--quiet','--detach','FETCH_HEAD')
-            $patches = @('execucao-rtx3060.patch')
-            if ($tipo -eq 'Diagnostico') { $patches += 'diagnostico-cena.patch' }
+            $patches = switch ($tipo) {
+                'SondaHDR' { 'sonda-hdr-35b054ec.patch' }
+                'Diagnostico' { 'execucao-rtx3060.patch'; 'diagnostico-cena.patch' }
+                default { 'execucao-rtx3060.patch' }
+            }
             foreach ($patch in $patches) {
                 $arquivo = Join-Path (Join-Path $PSScriptRoot 'patches') $patch
                 Invoke-Git @('-C',$tmp,'apply','--index','--whitespace=error-all',$arquivo)

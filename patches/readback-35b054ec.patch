@@ -1,0 +1,536 @@
+diff --git a/crates/victory-gpu/src/host.rs b/crates/victory-gpu/src/host.rs
+index d89159e..c4917ce 100644
+--- a/crates/victory-gpu/src/host.rs
++++ b/crates/victory-gpu/src/host.rs
+@@ -343,6 +343,7 @@ struct Deferred {
+     /// Destination, source, bytes.
+     copies: Vec<Step>,
+     uploads: Vec<ID3D12Resource>,
++    readbacks: Vec<crate::list::readback::Readback>,
+     /// Host objects the list's commands name (pipelines, root signatures,
+     /// descriptor heaps): the title may release its objects before it
+     /// submits the list.
+@@ -543,6 +544,23 @@ impl Host {
+             let written = shadow.copy_back(address, len);
+             COPY_BACK[1].fetch_add(written as u64, Ordering::Relaxed);
+         }
++        for list in runs {
++            let deferred = list.deferred();
++            if deferred.readbacks.is_empty() {
++                continue;
++            }
++            // SAFETY: a read-only query on the fence signaled for this submission.
++            let completed = unsafe { self.fence.GetCompletedValue() };
++            if completed != *submitted {
++                fail(format_args!(
++                    "host submission did not complete before texture readback"
++                ));
++            }
++            for readback in &deferred.readbacks {
++                let bytes = readback.publish();
++                COPY_BACK[1].fetch_add(bytes as u64, Ordering::Relaxed);
++            }
++        }
+         COPY_BACK[0].fetch_add(copying.elapsed().as_micros() as u64, Ordering::Relaxed);
+         for list in runs {
+             for &(at, what, bytes) in &list.deferred().writes {
+@@ -1011,6 +1029,10 @@ impl HostList {
+         self.deferred().writes.push((dst as usize, what, bytes));
+     }
+ 
++    pub(crate) fn defer_readback(&self, readback: crate::list::readback::Readback) {
++        self.deferred().readbacks.push(readback);
++    }
++
+     /// A mapped upload buffer of `size` bytes, alive until the list is
+     /// reset.
+     ///
+diff --git a/crates/victory-gpu/src/list.rs b/crates/victory-gpu/src/list.rs
+index 78d6d73..4729a1e 100644
+--- a/crates/victory-gpu/src/list.rs
++++ b/crates/victory-gpu/src/list.rs
+@@ -18,6 +18,9 @@ use crate::object::{
+ use crate::queue::Written;
+ use crate::resource::PAGEABLE_IIDS;
+ 
++#[cfg(windows)]
++pub(crate) mod readback;
++
+ const ALLOCATOR_IIDS: [Iid; 4] = [
+     guid(
+         0x6102dee4,
+@@ -478,9 +481,7 @@ pub(crate) struct CopyLocation {
+     footprint: crate::resource::PlacedFootprint,
+ }
+ 
+-/// Texture to texture on the GPU; buffer to texture through an upload
+-/// buffer filled at submission. Texture to buffer (read back) is not done
+-/// yet.
++/// Copy textures on the GPU, with staging for transfers to or from title buffers.
+ extern "system" fn copy_texture_region(
+     this: This,
+     dst: *const CopyLocation,
+@@ -503,9 +504,14 @@ extern "system" fn copy_texture_region(
+         else {
+             return;
+         };
++        let host_box = (!source_box.is_null()).then(|| source_box.cast::<D3D12_BOX>());
++        if dst.kind == FOOTPRINT {
++            // SAFETY: the caller passes one D3D12_BOX or null.
++            let source_box = host_box.map(|b| unsafe { &*b });
++            readback::record(list, dst, [x, y, z], src, source_box);
++            return;
++        }
+         let Some(to) = crate::resource::host_resource(dst.resource) else {
+-            static ONCE: std::sync::Once = std::sync::Once::new();
+-            ONCE.call_once(|| tracing::warn!("texture to buffer copies not implemented"));
+             return;
+         };
+         let mut from = src;
+@@ -542,7 +548,6 @@ extern "system" fn copy_texture_region(
+         crate::texture::host_written(dst.resource);
+         let mut to_location = dst;
+         to_location.resource = to.as_raw().cast_const().cast();
+-        let host_box = (!source_box.is_null()).then(|| source_box.cast::<D3D12_BOX>());
+         #[cfg(feature = "diagnostics")]
+         {
+             let text = || {
+diff --git a/crates/victory-gpu/src/list/readback.rs b/crates/victory-gpu/src/list/readback.rs
+new file mode 100644
+index 0000000..14b6c08
+--- /dev/null
++++ b/crates/victory-gpu/src/list/readback.rs
+@@ -0,0 +1,257 @@
++//! GPU texture copies into buffers in title memory.
++
++use super::{COPY_SOURCE, CopyLocation, buffer_range, ensure_state};
++use crate::host::HostList;
++use crate::resource::{PlacedFootprint, element, family, host_resource, pc_format};
++use windows::Win32::Graphics::Direct3D12::*;
++use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_SAMPLE_DESC};
++use windows::core::Interface;
++
++struct CopyLayout {
++    width: u32,
++    height: u32,
++    guest_offset: u64,
++    guest_span: u64,
++    row_bytes: u32,
++    staging_pitch: u32,
++    staging_bytes: u64,
++}
++
++impl CopyLayout {
++    fn new(
++        source: &D3D12_RESOURCE_DESC,
++        subresource: u64,
++        dst: PlacedFootprint,
++        [x, y, z]: [u32; 3],
++        area: Option<&D3D12_BOX>,
++    ) -> Option<Self> {
++        let mips = u64::from(source.MipLevels);
++        if source.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D
++            || source.SampleDesc.Count != 1
++            || source
++                .Flags
++                .contains(D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)
++            || subresource >= mips * u64::from(source.DepthOrArraySize)
++            || dst.depth != 1
++            || z != 0
++            || pc_format(dst.format) != dst.format
++            || matches!(dst.format, 19..=22 | 40 | 44..=47 | 55 | 68 | 69)
++            || family(source.Format.0 as u32) != family(dst.format)
++        {
++            return None;
++        }
++        let (bytes_per_texel, 1) = element(dst.format)? else {
++            return None;
++        };
++        let texel = u32::try_from(bytes_per_texel).ok()?;
++        let mip = u32::try_from(subresource % mips).ok()?;
++        let source_width = u32::try_from(source.Width.checked_shr(mip).unwrap_or(0).max(1)).ok()?;
++        let source_height = source.Height.checked_shr(mip).unwrap_or(0).max(1);
++        let full_source = D3D12_BOX {
++            left: 0,
++            top: 0,
++            front: 0,
++            right: source_width,
++            bottom: source_height,
++            back: 1,
++        };
++        let area = area.unwrap_or(&full_source);
++        if area.right > source_width
++            || area.bottom > source_height
++            || area.front != 0
++            || area.back != 1
++            || area.left >= area.right
++            || area.top >= area.bottom
++        {
++            return None;
++        }
++        let width = area.right - area.left;
++        let height = area.bottom - area.top;
++        if x.checked_add(width)? > dst.width
++            || y.checked_add(height)? > dst.height
++            || dst.row_pitch < dst.width.checked_mul(texel)?
++        {
++            return None;
++        }
++        let guest_offset = dst
++            .offset
++            .checked_add(u64::from(y) * u64::from(dst.row_pitch))?
++            .checked_add(u64::from(x) * bytes_per_texel)?;
++        let row_bytes = width.checked_mul(texel)?;
++        let staging_pitch =
++            row_bytes.checked_next_multiple_of(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT)?;
++        let row_span = |pitch| u64::from(height - 1) * u64::from(pitch) + u64::from(row_bytes);
++        Some(Self {
++            width,
++            height,
++            guest_offset,
++            guest_span: row_span(dst.row_pitch),
++            row_bytes,
++            staging_pitch,
++            staging_bytes: row_span(staging_pitch),
++        })
++    }
++}
++
++pub(super) fn record(
++    list: &HostList,
++    dst: CopyLocation,
++    position: [u32; 3],
++    src: CopyLocation,
++    area: Option<&D3D12_BOX>,
++) {
++    if record_copy(list, dst, position, src, area).is_none() {
++        tracing::debug!(
++            from = ?src.resource,
++            to = ?dst.resource,
++            subresource = src.footprint.offset,
++            ?dst.footprint,
++            ?position,
++            "texture-to-buffer copy could not be recorded"
++        );
++    }
++}
++
++fn record_copy(
++    list: &HostList,
++    dst: CopyLocation,
++    position: [u32; 3],
++    src: CopyLocation,
++    area: Option<&D3D12_BOX>,
++) -> Option<()> {
++    if src.kind != 0 {
++        return None;
++    }
++    let host = crate::host::host()?;
++    let texture = host_resource(src.resource)?;
++    // SAFETY: a live host texture.
++    let desc = unsafe { texture.GetDesc() };
++    // The subresource index occupies the first DWORD of the copy location's union.
++    let subresource = src.footprint.offset as u32;
++    let layout = CopyLayout::new(&desc, u64::from(subresource), dst.footprint, position, area)?;
++    let target = buffer_range(dst.resource, layout.guest_offset, layout.guest_span)?;
++    let buffer = allocate(&host.device, layout.staging_bytes)?;
++
++    if crate::texture::title_written(texture) {
++        crate::texture::upload(list, src.resource, texture);
++    }
++    ensure_state(list, src.resource, COPY_SOURCE);
++    let to = D3D12_TEXTURE_COPY_LOCATION {
++        // SAFETY: D3D12 copy locations borrow their resource pointers.
++        pResource: unsafe { std::mem::transmute_copy(&buffer) },
++        Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
++        Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
++            PlacedFootprint: D3D12_PLACED_SUBRESOURCE_FOOTPRINT {
++                Offset: 0,
++                Footprint: D3D12_SUBRESOURCE_FOOTPRINT {
++                    Format: DXGI_FORMAT(dst.footprint.format as i32),
++                    Width: layout.width,
++                    Height: layout.height,
++                    Depth: 1,
++                    RowPitch: layout.staging_pitch,
++                },
++            },
++        },
++    };
++    let from = D3D12_TEXTURE_COPY_LOCATION {
++        // SAFETY: the list's state tracking keeps the host texture alive.
++        pResource: unsafe { std::mem::transmute_copy(texture) },
++        Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
++        Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 {
++            SubresourceIndex: subresource,
++        },
++    };
++    #[cfg(feature = "diagnostics")]
++    list.note_op(|| {
++        format!(
++            "texture readback {:?} sub {subresource} f{} {}x{} to {:?} offset {} pitch {}",
++            src.resource,
++            dst.footprint.format,
++            layout.width,
++            layout.height,
++            dst.resource,
++            layout.guest_offset,
++            dst.footprint.row_pitch,
++        )
++    });
++    // SAFETY: both resources are live; the texture and rectangle fit their locations.
++    unsafe {
++        list.list
++            .CopyTextureRegion(&to, 0, 0, 0, &from, area.map(std::ptr::from_ref))
++    };
++    list.defer_readback(Readback {
++        buffer,
++        target: target as usize,
++        guest_pitch: dst.footprint.row_pitch as usize,
++        layout,
++    });
++    Some(())
++}
++
++fn allocate(device: &ID3D12Device, bytes: u64) -> Option<ID3D12Resource> {
++    let heap = D3D12_HEAP_PROPERTIES {
++        Type: D3D12_HEAP_TYPE_READBACK,
++        ..Default::default()
++    };
++    let desc = D3D12_RESOURCE_DESC {
++        Dimension: D3D12_RESOURCE_DIMENSION_BUFFER,
++        Width: bytes,
++        Height: 1,
++        DepthOrArraySize: 1,
++        MipLevels: 1,
++        SampleDesc: DXGI_SAMPLE_DESC {
++            Count: 1,
++            Quality: 0,
++        },
++        Layout: D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
++        ..Default::default()
++    };
++    let mut buffer = None;
++    // SAFETY: the description is a row-major buffer in a readback heap.
++    if let Err(error) = unsafe {
++        device.CreateCommittedResource(
++            &heap,
++            D3D12_HEAP_FLAG_NONE,
++            &desc,
++            D3D12_RESOURCE_STATE_COPY_DEST,
++            None,
++            &mut buffer,
++        )
++    } {
++        tracing::warn!(%error, bytes, "creating a texture readback buffer failed");
++    }
++    buffer
++}
++
++pub(crate) struct Readback {
++    buffer: ID3D12Resource,
++    target: usize,
++    guest_pitch: usize,
++    layout: CopyLayout,
++}
++
++impl Readback {
++    pub(crate) fn publish(&self) -> usize {
++        let mut mapped = std::ptr::null_mut();
++        let range = D3D12_RANGE {
++            Begin: 0,
++            End: self.layout.staging_bytes as usize,
++        };
++        // SAFETY: the queue has completed the copy and the range is within the resource.
++        if let Err(error) = unsafe { self.buffer.Map(0, Some(&range), Some(&mut mapped)) } {
++            tracing::warn!(%error, "mapping a texture readback buffer failed");
++            return 0;
++        }
++        let src = mapped.cast::<u8>();
++        let row_bytes = self.layout.row_bytes as usize;
++        for row in 0..self.layout.height as usize {
++            let from = src.wrapping_add(row * self.layout.staging_pitch as usize);
++            let to = self.target + row * self.guest_pitch;
++            crate::watch::writing(to, row_bytes);
++            crate::host::write_mapped(to as *mut u8, from, row_bytes);
++        }
++        // SAFETY: this mapping was only read by the CPU.
++        unsafe { self.buffer.Unmap(0, Some(&D3D12_RANGE::default())) };
++        self.layout.height as usize * row_bytes
++    }
++}
+diff --git a/crates/victory-gpu/src/resource.rs b/crates/victory-gpu/src/resource.rs
+index 46c5c71..80aa5fb 100644
+--- a/crates/victory-gpu/src/resource.rs
++++ b/crates/victory-gpu/src/resource.rs
+@@ -316,11 +316,11 @@ fn mip_count(desc: &ResourceDesc) -> u32 {
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub(crate) struct PlacedFootprint {
+     pub(crate) offset: u64,
+-    format: u32,
+-    width: u32,
+-    height: u32,
+-    depth: u32,
+-    row_pitch: u32,
++    pub(crate) format: u32,
++    pub(crate) width: u32,
++    pub(crate) height: u32,
++    pub(crate) depth: u32,
++    pub(crate) row_pitch: u32,
+ }
+ 
+ impl PlacedFootprint {
+@@ -1783,6 +1783,154 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    #[cfg(windows)]
++    fn texture_readback_preserves_gpu_contents_and_guest_padding() {
++        use windows::Win32::Foundation::RECT;
++
++        let Some(host) = crate::host::host() else {
++            eprintln!("D3D12 device unavailable. Texture readback was not exercised.");
++            return;
++        };
++        let null = std::ptr::null();
++        let iid = &RESOURCE_IIDS[0];
++        let mut image = null;
++        let mut dst = null;
++        let desc = ResourceDesc {
++            flags: 1,
++            ..texture(5, 2, 2, 1)
++        }; // RGBA32F RTV
++        assert_eq!(
++            create_committed(null, &PROPERTIES, 0, &desc, 0, null.cast(), iid, &mut image),
++            S_OK
++        );
++        assert_eq!(
++            create_committed(
++                null,
++                &PROPERTIES,
++                0,
++                &buffer(768),
++                0,
++                null.cast(),
++                iid,
++                &mut dst
++            ),
++            S_OK
++        );
++        let (data, _) = buffer_bytes(dst).unwrap();
++        // SAFETY: `dst` has 768 title-visible bytes.
++        unsafe { data.write_bytes(0xa5, 768) };
++
++        let allocator_iid = guid(
++            0x6102dee4,
++            0xaf59,
++            0x4b09,
++            [0xb9, 0x99, 0xb4, 0x4d, 0x73, 0xf0, 0x9b, 0x24],
++        );
++        let list_iid = guid(
++            0x5b160d0f,
++            0xac1b,
++            0x4185,
++            [0x8b, 0xa8, 0xb3, 0xae, 0x42, 0xa5, 0xa4, 0x55],
++        );
++        let (mut allocator, mut list) = (null, null);
++        assert_eq!(
++            crate::list::create_allocator(null, 0, &allocator_iid, &mut allocator),
++            S_OK
++        );
++        assert_eq!(
++            crate::list::create_list(null, 0, 0, allocator, null, &list_iid, &mut list),
++            S_OK
++        );
++        let native = crate::list::host_list(list).unwrap();
++        let tex = host_resource(image).unwrap();
++        let rtv = host.rtv(tex, None);
++        let first = [0.125_f32, -0.25, 2.5, 1.0];
++        let second = [0.25_f32, 0.5, 4.0, 1.0];
++        crate::list::ensure_state(native, image, 0x4);
++        // SAFETY: the native list is open and `rtv` names a live target.
++        unsafe {
++            native.list.ClearRenderTargetView(rtv, &first, None);
++            native.list.ClearRenderTargetView(
++                rtv,
++                &second,
++                Some(&[RECT {
++                    left: 0,
++                    top: 1,
++                    right: 5,
++                    bottom: 2,
++                }]),
++            );
++        }
++
++        #[repr(C)]
++        struct Location {
++            resource: This,
++            kind: u32,
++            footprint: PlacedFootprint,
++        }
++        let rows = PlacedFootprint {
++            offset: 0,
++            format: 2,
++            width: 5,
++            height: 1,
++            depth: 1,
++            row_pitch: 256,
++        };
++        let source = Location {
++            resource: image,
++            kind: 0,
++            footprint: rows,
++        };
++        let full = Location {
++            resource: dst,
++            kind: 1,
++            footprint: rows,
++        };
++        let region = Location {
++            resource: dst,
++            kind: 1,
++            footprint: PlacedFootprint {
++                offset: 256,
++                width: 4,
++                height: 3,
++                row_pitch: 72,
++                ..rows
++            },
++        };
++        type Copy = extern "system" fn(
++            This,
++            *const Location,
++            u32,
++            u32,
++            u32,
++            *const Location,
++            *const [u32; 6],
++        );
++        let copy = slot::<Copy>(list, 0x80);
++        copy(list, &full, 0, 0, 0, &source, &[0, 0, 0, 5, 1, 1]);
++        copy(list, &region, 1, 1, 0, &source, &[2, 0, 0, 4, 2, 1]);
++        assert_eq!(
++            slot::<extern "system" fn(This) -> HRESULT>(list, 0x48)(list),
++            S_OK
++        );
++        host.execute(&[native]);
++
++        let mut expected = [0xa5; 768];
++        let bytes = |rgba: [f32; 4]| rgba.map(f32::to_le_bytes).concat();
++        expected[..80].copy_from_slice(&bytes(first).repeat(5));
++        expected[344..376].copy_from_slice(&bytes(first).repeat(2));
++        expected[416..448].copy_from_slice(&bytes(second).repeat(2));
++        // SAFETY: the submission completed and `dst` is still live.
++        assert_eq!(
++            unsafe { std::slice::from_raw_parts(data, expected.len()) },
++            &expected
++        );
++        for obj in [list, allocator, image, dst] {
++            assert_eq!(slot::<Release>(obj, 0x10)(obj), 0);
++        }
++    }
++
+     #[test]
+     fn committed_and_placed_resources_map_at_their_gpu_address() {
+         let null = std::ptr::null();
