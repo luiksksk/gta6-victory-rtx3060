@@ -11,7 +11,7 @@ Com GTA VI para Xbox v1.0.2.1 e uma GeForce RTX 3060 de 12 GB, a correção elim
 | Variante | Resultado observado |
 | --- | --- |
 | `Execucao` | Corrige a tabela de descritores compartilhada pelos shaders. Foi a variante usada para registrar os créditos e o áudio da introdução. |
-| `Diagnostico` | Acrescenta tradução de um subconjunto de operações wave64, pré-compilação de pipelines observados e captura dos primeiros quadros com malhas 3D. A RTX aceitou três shaders adicionais. Os 28 primeiros quadros 3D capturados no modo Series X continuaram escuros. |
+| `Diagnostico` | Adapta algumas operações Wave64, prepara pipelines observados e captura os primeiros quadros com malhas 3D. No teste isolado do catálogo, a RTX aceitou 25 dos 321 pipelines de compute que a variante padrão perdeu por exigir Wave64. Os 28 primeiros quadros 3D capturados em um ensaio anterior no modo Series X continuaram escuros. |
 | `SondaHDR` | Variante de investigação sobre `35b054ec`. Mede as texturas HDR, os argumentos de compute e a composição nos quadros após o letreiro. [Instruções para reproduzir](docs/diagnostico-rtx3060.md#reproduzir-a-sonda) |
 
 ## Compilar
@@ -29,6 +29,10 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\VIctory.ps1 -Aca
 O script busca o commit exato do VIctory, aplica o patch, confere a árvore Git e compila com Rust `1.98.1` e `Cargo.lock`. A opção `RemoteSigned` aplica-se ao processo de PowerShell desse comando. As fontes e a compilação ficam em `%LOCALAPPDATA%\VIctory-RTX3060-Publico`.
 
 ## Executar
+
+Ao iniciar, o lançador aguarda a pré-compilação dos shaders identificáveis na instalação. O terminal mostra a porcentagem e quantos shaders o VIctory traduziu ou rejeitou. Na v1.0.2.1, a variante padrão traduziu 22.160 dos 25.985 shaders. O cache fica na máquina do usuário. [Como funciona a preparação](MANUAL.md#3-abra-o-jogo)
+
+Nos 30 segundos após a legenda de localização, os descartes da primeira missão citaram 76 shaders por hash. A investigação também identificou a que correspondem os números 2400, 2401 e 2402 nas duas contagens do arquivo. [Resultados na RTX 3060](docs/shaders-e-wave64.md) · [Lista dos 76 shaders](docs/shaders-primeira-missao.csv)
 
 Aponte o lançador para a pasta que contém `game_scarlett_master.exe`. O caminho abaixo é um exemplo.
 

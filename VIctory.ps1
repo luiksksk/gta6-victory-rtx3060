@@ -1,7 +1,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('Compilar','Executar','Config')]
+    [ValidateSet('Compilar','Executar','Config','PrepararShaders')]
     [string]$Acao = 'Executar',
     [ValidateSet('Execucao','Diagnostico','SondaHDR')]
     [string]$Variante = 'Execucao',
@@ -14,9 +14,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $base = '015d45bfff4d82e7afad89afe10dd24e5a402ef8'
 $arvores = @{
-    Execucao = '5cbdcebfd72456bf885d9f0bf1a713424c7b951b'
-    Diagnostico = '78f8c7a553a8cd0cd5fd1a3af3a95821e8a6b702'
-    SondaHDR = '8c225469301e8460fab0667dde27a2d1a64f54d1'
+    Execucao = '242c34f77aa8990cc66ac8fdfca43085c2c0fa69'
+    Diagnostico = 'b080813ecbfda50f7921dce366063b3a2ff974b2'
+    SondaHDR = 'e3a6fc73fdd78b4d0d8a1e74d979f029b60e40a8'
 }
 # PowerShell accepts case-insensitive parameter values. Keep paths canonical.
 $tipo = switch ($Variante) {
@@ -70,6 +70,10 @@ function Get-PatchedSource {
                 $arquivo = Join-Path (Join-Path $PSScriptRoot 'patches') $patch
                 Invoke-Git @('-C',$tmp,'apply','--index','--whitespace=error-all',$arquivo)
             }
+            # The translator's first statement differs by variant. The shared
+            # insertion is anchored on the function signature and verified below.
+            $preparo = Join-Path (Join-Path $PSScriptRoot 'patches') 'preparacao-shaders.patch'
+            Invoke-Git @('-C',$tmp,'apply','--index','--unidiff-zero','--whitespace=error-all',$preparo)
             if ((Invoke-Git @('-C',$tmp,'write-tree')) -ne $arvore) {
                 throw 'A fonte preparada divergiu da versao testada.'
             }
@@ -142,7 +146,7 @@ if (!$PastaJogo) { $PastaJogo = Read-Host 'Caminho da pasta da sua instalacao de
 $jogo = Get-Item -LiteralPath ($PastaJogo.Trim().Trim('"'))
 if (!$jogo.PSIsContainer) { throw 'Informe a pasta da instalacao.' }
 $tituloExe = Join-Path $jogo.FullName 'game_scarlett_master.exe'
-if ($Acao -eq 'Executar' -and !(Test-Path -LiteralPath $tituloExe -PathType Leaf)) {
+if ($Acao -in @('Executar','PrepararShaders') -and !(Test-Path -LiteralPath $tituloExe -PathType Leaf)) {
     throw "Executavel do titulo ausente na pasta informada: $tituloExe"
 }
 if ($PerfilOrigem) { Copy-TestProfile $PerfilOrigem }
@@ -169,7 +173,11 @@ function Set-ProcessEnvironment([string]$Nome, $Valor) {
 try {
     foreach ($nome in $config.Keys) { Set-ProcessEnvironment $nome $config[$nome] }
     Write-Host "Pasta do perfil de teste: $dados"
+    if ($Acao -in @('Executar','PrepararShaders')) {
+        Write-Host 'Prontos conta shaders traduzidos. O driver ainda precisa criar os pipelines usados pelo jogo.'
+    }
     if ($Acao -eq 'Config') { & $binario config }
+    elseif ($Acao -eq 'PrepararShaders') { & $binario prepare-shaders $tituloExe }
     else { & $binario run $tituloExe --execute --console $Console }
     $codigo = $LASTEXITCODE
 } finally {

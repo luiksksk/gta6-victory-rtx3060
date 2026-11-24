@@ -36,6 +36,18 @@ Na pasta que você clonou, dê dois cliques em **Iniciar-VIctory.cmd**. Quando a
 .\Iniciar-VIctory.cmd -PastaJogo "D:\Jogos\GTA VI"
 ```
 
+Antes de abrir a janela do jogo, o terminal mostra **Shaders 0% a 100%**. A etapa verifica os shaders encontrados em `shaders.rpf`, no executável do título e nas DLLs ao lado dele. O contador usa shaders distintos. **Prontos** inclui os compilados agora e os recuperados do cache. **Incompatíveis** conta os que a versão instalada do VIctory ainda não consegue traduzir. O jogo só começa quando todos os shaders encontrados tiverem sido processados. Se a instalação ou o cache não puderem ser lidos, o lançador exibe o erro e interrompe o início.
+
+Na segunda abertura, o VIctory reaproveita os resultados do mesmo build. Uma atualização do jogo pode acrescentar shaders. Uma recompilação que mude o binário exige nova preparação.
+
+**O que esperar na RTX 3060.** No teste com a v1.0.2.1 e a variante `Execucao`, a primeira preparação chegou a 100% em 2 min 16 s, e a janela abriu em 2 min 19 s. Apareceram **22.160 prontos e 3.825 incompatíveis**. Repetir a preparação com o cache aquecido levou 4,4 s. O contador “prontos” confirma que o VIctory produziu a tradução. Durante o jogo, o driver ainda combina shaders e estados gráficos em pipelines. Nessa placa, ele recusou 321 shaders traduzidos que exigem Wave64. A introdução pode continuar com áudio e créditos sobre fundo escuro mesmo depois de 100%. [Shaders identificados na missão e testes de Wave64](docs/shaders-e-wave64.md)
+
+Se quiser preparar o cache agora e abrir o jogo em outro momento, use o PowerShell na pasta do lançador.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\VIctory.ps1 -Acao PrepararShaders -PastaJogo "D:\Jogos\GTA VI"
+```
+
 O padrão é o modo Series X. O lançador usa uma pasta própria para o perfil em `%LOCALAPPDATA%\VIctory-RTX3060-Publico\dados\Execucao`. Para abrir de novo, basta usar o mesmo lançador. Para importar uma **cópia** de um perfil que você já usa no VIctory, consulte as [instruções de perfil](README.md#executar).
 
 ## Se algo impedir o início

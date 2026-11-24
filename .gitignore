@@ -8,6 +8,9 @@
 /docs/*
 !/docs/diagnostico-rtx3060.md
 !/docs/medicoes-rtx3060.json
+!/docs/shaders-e-wave64.md
+!/docs/shaders-primeira-missao.csv
+!/docs/shaders-com-pendencias.csv
 !/LICENSE
 !/VIctory.ps1
 !/Iniciar-VIctory.cmd
@@ -17,3 +20,4 @@
 !/patches/diagnostico-cena.patch
 !/patches/sonda-hdr-35b054ec.patch
 !/patches/readback-35b054ec.patch
+!/patches/preparacao-shaders.patch

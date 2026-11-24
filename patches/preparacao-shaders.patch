@@ -1,0 +1,306 @@
+diff --git a/apps/victory/src/main.rs b/apps/victory/src/main.rs
+index 31392ff..f37e11d 100644
+--- a/apps/victory/src/main.rs
++++ b/apps/victory/src/main.rs
+@@ -5,6 +5,8 @@
+ 
+ mod census;
+ mod inspect;
++#[cfg(windows)]
++mod precompile;
+ mod run;
+ mod shader;
+ mod translate;
+@@ -105,6 +107,9 @@ enum Command {
+         #[arg(last = true)]
+         title_args: Vec<String>,
+     },
++    /// Prepare the local title's shaders before starting a game.
++    #[cfg(windows)]
++    PrepareShaders { exe: PathBuf },
+     /// Show the resolved configuration and check it.
+     Config,
+ }
+@@ -161,6 +166,8 @@ fn main() -> Result<()> {
+             console,
+             title_args: _,
+         } => run::run(&exe, unimplemented, strict, execute, console),
++        #[cfg(windows)]
++        Command::PrepareShaders { exe } => precompile::run(&exe),
+         Command::Config => show_config(),
+     }
+ }
+diff --git a/apps/victory/src/precompile.rs b/apps/victory/src/precompile.rs
+new file mode 100644
+index 0000000..6f4b2ac
+--- /dev/null
++++ b/apps/victory/src/precompile.rs
+@@ -0,0 +1,145 @@
++//! Prepare the same build- and adapter-specific DXIL cache used at draw time.
++use std::collections::HashSet;
++use std::io::{self, IsTerminal, Write};
++use std::path::Path;
++use std::sync::Mutex;
++use std::sync::atomic::{AtomicUsize, Ordering};
++
++use anyhow::{Context, Result, ensure};
++use victory_hle::modules::d3d12x;
++
++use crate::shader::sources;
++
++#[derive(Default)]
++struct Inventory {
++    seen: HashSet<blake3::Hash>,
++    shaders: Vec<Vec<u8>>,
++}
++
++impl Inventory {
++    fn add_file(&mut self, path: &Path) -> Result<()> {
++        let bytes = std::fs::read(path).with_context(|| format!("Lendo {}", path.display()))?;
++        for source in sources(&bytes) {
++            let container = source.bytes().with_context(|| {
++                format!(
++                    "Registro de shader danificado em {} {}",
++                    path.display(),
++                    source.label()
++                )
++            })?;
++            let data = container.as_ref();
++            ensure!(
++                data.starts_with(b"DXBC") && data.len() >= 32,
++                "Contêiner de shader inválido em {} {}",
++                path.display(),
++                source.label()
++            );
++            let len = u32::from_le_bytes(data[24..28].try_into()?) as usize;
++            ensure!(
++                (32..=data.len()).contains(&len),
++                "Tamanho de shader inválido em {}",
++                path.display()
++            );
++            let data = &data[..len];
++            if self.seen.insert(blake3::hash(data)) {
++                self.shaders.push(data.to_vec());
++            }
++        }
++        Ok(())
++    }
++}
++
++#[derive(Default)]
++struct Progress {
++    ready: usize,
++    rejected: usize,
++    percent: usize,
++}
++
++impl Progress {
++    fn complete(&mut self, ready: bool, total: usize) {
++        if ready {
++            self.ready += 1;
++        } else {
++            self.rejected += 1;
++        }
++        let done = self.ready + self.rejected;
++        let percent = 100 * done / total;
++        if percent == self.percent {
++            return;
++        }
++        self.percent = percent;
++        let message = format!(
++            "Shaders {percent:3}% ({done}/{total}) | prontos: {} | incompatíveis: {}",
++            self.ready, self.rejected
++        );
++        if io::stdout().is_terminal() && done < total {
++            print!("\r{message}");
++            let _ = io::stdout().flush();
++        } else if io::stdout().is_terminal() {
++            println!("\r{message}");
++        } else {
++            println!("{message}");
++        }
++    }
++}
++
++pub fn run(exe: &Path) -> Result<()> {
++    println!("Procurando shaders na instalação local...");
++    let cfg = victory_core::Config::load()?;
++    d3d12x::use_shader_cache(cfg.cache_subdir("shaders")?);
++    let dir = exe
++        .parent()
++        .filter(|p| !p.as_os_str().is_empty())
++        .unwrap_or(Path::new("."));
++    let mut inventory = Inventory::default();
++    inventory.add_file(&dir.join("shaders.rpf"))?;
++    ensure!(
++        !inventory.shaders.is_empty(),
++        "Nenhum shader encontrado em shaders.rpf. Confira a instalação do jogo."
++    );
++    inventory.add_file(exe)?;
++    for entry in std::fs::read_dir(dir)? {
++        let path = entry?.path();
++        if path
++            .extension()
++            .is_some_and(|e| e.eq_ignore_ascii_case("dll"))
++            && path.is_file()
++        {
++            inventory.add_file(&path)?;
++        }
++    }
++    let total = inventory.shaders.len();
++    println!("Shaders   0% (0/{total})");
++    let next = AtomicUsize::new(0);
++    let progress = Mutex::new(Progress::default());
++    let workers = std::thread::available_parallelism()
++        .map_or(1, usize::from)
++        .min(6)
++        .min(total);
++    std::thread::scope(|scope| -> Result<()> {
++        let mut threads = Vec::new();
++        for _ in 0..workers {
++            threads.push(scope.spawn(|| -> Result<()> {
++                while let Some(data) = inventory.shaders.get(next.fetch_add(1, Ordering::Relaxed)) {
++                    let ready = match d3d12x::prepare_shader(data) {
++                        Ok(outcome) => outcome,
++                        Err(error) => {
++                            next.store(total, Ordering::Relaxed);
++                            anyhow::bail!("Falha no cache de shaders: {error}");
++                        }
++                    };
++                    progress.lock().unwrap().complete(ready, total);
++                }
++                Ok(())
++            }));
++        }
++        for worker in threads {
++            worker
++                .join()
++                .map_err(|_| anyhow::anyhow!("Falha no worker de shaders"))??;
++        }
++        Ok(())
++    })?;
++    Ok(())
++}
+diff --git a/apps/victory/src/run.rs b/apps/victory/src/run.rs
+index 5213147..5f8f128 100644
+--- a/apps/victory/src/run.rs
++++ b/apps/victory/src/run.rs
+@@ -19,6 +19,16 @@ pub fn run(
+     // A title that relaunched itself: the old process must be gone first.
+     victory_hle::modules::lifecycle::wait_for_previous();
+     let cfg = victory_core::Config::load()?;
++    if execute && exe.file_name().is_some_and(|n| n.eq_ignore_ascii_case("game_scarlett_master.exe")) {
++        // Keep the large inventory and compilation workers out of the title's address space.
++        let status = std::process::Command::new(std::env::current_exe()?)
++            .arg("prepare-shaders")
++            .arg(exe)
++            .status()
++            .context("Iniciando a preparação dos shaders")?;
++        anyhow::ensure!(status.success(), "Preparação de shaders interrompida ({status})");
++        println!("Preparação concluída. Iniciando o jogo...");
++    }
+     let original = std::fs::read(exe).with_context(|| format!("reading {}", exe.display()))?;
+     let prepared = victory_loader::prepare(&original)?;
+     let hash = prepared.original_hash.to_hex();
+diff --git a/crates/victory-gpu/src/shader_cache.rs b/crates/victory-gpu/src/shader_cache.rs
+index b52d7f0..f6f712e 100644
+--- a/crates/victory-gpu/src/shader_cache.rs
++++ b/crates/victory-gpu/src/shader_cache.rs
+@@ -60,1 +60,26 @@ fn build() -> &'static [u8; 32] {
+ pub(crate) fn host_shader(container: &[u8]) -> Result<HostShader, String> {
++    load_shader(container).map_err(|error| match error {
++        Failure::Shader(reason) | Failure::Cache(reason) => reason,
++    })
++}
++
++#[derive(Debug, PartialEq)]
++enum Failure {
++    Shader(String),
++    Cache(String),
++}
++
++/// True for usable translations, false for a deterministic translator rejection.
++/// A missing or unwritable cache prevents the title from passing the startup gate.
++pub fn prepare_shader(container: &[u8]) -> Result<bool, String> {
++    if CACHE.get().is_none() {
++        return Err("cache indisponível".into());
++    }
++    match load_shader(container) {
++        Ok(_) => Ok(true),
++        Err(Failure::Shader(_)) => Ok(false),
++        Err(Failure::Cache(error)) => Err(error),
++    }
++}
++
++fn load_shader(container: &[u8]) -> Result<HostShader, Failure> {
+@@ -63,3 +88,3 @@ pub(crate) fn host_shader(container: &[u8]) -> Result<HostShader, String> {
+         Some(cache) => cached(cache, build(), container, translate),
+-        None => translate(container),
++        None => translate(container).map_err(Failure::Shader),
+     }
+@@ -84,4 +109,11 @@ impl<F: Fn(&[u8]) -> Result<HostShader, String> + Send + Sync> Converter for Tra
+         self.ran.store(true, Ordering::Relaxed);
+-        let shader = (self.translate)(&input[32..]).map_err(anyhow::Error::msg)?;
+-        Ok(encode(&shader))
++        Ok(match (self.translate)(&input[32..]) {
++            Ok(shader) => encode(&shader),
++            Err(reason) => {
++                let mut bytes = b"VSE1".to_vec();
++                bytes.extend_from_slice(blake3::hash(reason.as_bytes()).as_bytes());
++                bytes.extend_from_slice(reason.as_bytes());
++                bytes
++            }
++        })
+     }
+@@ -94,3 +126,3 @@ fn cached(
+     translate: impl Fn(&[u8]) -> Result<HostShader, String> + Send + Sync,
+-) -> Result<HostShader, String> {
++) -> Result<HostShader, Failure> {
+     let input = [&build[..], container].concat();
+@@ -103,4 +135,11 @@ fn cached(
+             .get_or_convert(&converter, &input)
+-            .map_err(|e| format!("{e:#}"))?;
+-        if let Some(shader) = std::fs::read(&path).ok().and_then(|b| decode(&b)) {
++            .map_err(|e| Failure::Cache(format!("{e:#}")))?;
++        let bytes = std::fs::read(&path).map_err(|e| Failure::Cache(format!("{}: {e}", path.display())))?;
++        if let Some((digest, text)) = bytes.strip_prefix(b"VSE1").and_then(|b| b.split_at_checked(32))
++            && digest == blake3::hash(text).as_bytes()
++            && let Ok(reason) = std::str::from_utf8(text)
++        {
++            return Err(Failure::Shader(reason.to_owned()));
++        }
++        if let Some(shader) = decode(&bytes) {
+             let (counter, what) = if converter.ran.load(Ordering::Relaxed) {
+@@ -118,3 +157,3 @@ fn cached(
+     MISSES.fetch_add(1, Ordering::Relaxed);
+-    (converter.translate)(container)
++    Err(Failure::Cache("entrada de cache inválida após a recompilação".into()))
+ }
+@@ -321,5 +360,14 @@ mod tests {
+ 
+-        // Failures are not stored.
+-        let fail = |_: &[u8]| Err::<HostShader, _>("unsupported".to_owned());
+-        assert!(cached(&cache, &build, b"other", fail).is_err());
++        // A stable translator rejection is reused until the build changes.
++        let failures = AtomicU64::new(0);
++        let fail = |_: &[u8]| {
++            failures.fetch_add(1, Ordering::Relaxed);
++            Err::<HostShader, _>("unsupported".to_owned())
++        };
++        for _ in 0..2 {
++            assert_eq!(cached(&cache, &build, b"other", fail), Err(Failure::Shader("unsupported".into())));
++        }
++        assert_eq!(failures.load(Ordering::Relaxed), 1);
++        assert!(cached(&cache, &[8; 32], b"other", fail).is_err());
++        assert_eq!(failures.load(Ordering::Relaxed), 2);
+     }
+diff --git a/crates/victory-hle/src/modules/d3d12x.rs b/crates/victory-hle/src/modules/d3d12x.rs
+index ef8b231..e0774ff 100644
+--- a/crates/victory-hle/src/modules/d3d12x.rs
++++ b/crates/victory-hle/src/modules/d3d12x.rs
+@@ -47,2 +47,5 @@ pub fn use_shader_cache(dir: std::path::PathBuf) {
+ 
++#[cfg(windows)]
++pub use victory_gpu::shader_cache::prepare_shader;
++
+ pub(crate) fn module() -> HleModule {
