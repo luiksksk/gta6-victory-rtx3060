@@ -20,7 +20,7 @@ $arvores = @{
     Geometria = '85ae3d3dc2cb0770950a3c5cccaf78d694af3f98'
     CoresPlanas = '9d796cbc1f369c9101d3e0123eb27dde574f1190'
     Materiais = '6fc6ceb882461675a417fe9160a194aea8df43ea'
-    SondaMateriais = '6ab5a7b4bd2232faf908b036eaef18449990e8f4'
+    SondaMateriais = '0c3b293b7752d3c4e39fb6ebc3a82b6f6f59cd50'
 }
 # PowerShell accepts case-insensitive parameter values. Keep paths canonical.
 $tipo = switch ($Variante) {
@@ -99,6 +99,12 @@ function Get-PatchedSource {
             if ($tipo -in @('Execucao','SondaMateriais')) {
                 $clwb = Join-Path (Join-Path $PSScriptRoot 'patches') 'loader-clwb.patch'
                 Invoke-Git @('-C',$tmp,'apply','--index','--whitespace=error-all',$clwb)
+            }
+            if ($tipo -eq 'SondaMateriais') {
+                foreach ($nomePatch in @('vistas-e-pausa-876.patch','texturas-residencia-tardia.patch')) {
+                    $arquivo = Join-Path (Join-Path $PSScriptRoot 'patches') $nomePatch
+                    Invoke-Git @('-C',$tmp,'apply','--index','--whitespace=error-all',$arquivo)
+                }
             }
             if ((Invoke-Git @('-C',$tmp,'write-tree')) -ne $arvore) {
                 throw 'A fonte preparada divergiu da versao testada.'
@@ -210,7 +216,7 @@ $anterior = @{}
 if ($tipo -in @('Geometria','CoresPlanas','Materiais','SondaMateriais')) {
     $config['VICTORY_LOW_VA_MIB'] = '512'
     $config['VICTORY_PREWARM_LOG'] = Join-Path (Join-Path $PSScriptRoot 'docs') 'pipelines-geometria.txt'
-    $config['VICTORY_PRESENT_TARGET'] = if ($env:VICTORY_PRESENT_TARGET -eq 'nativo') { $null } elseif ($env:VICTORY_PRESENT_TARGET) { $env:VICTORY_PRESENT_TARGET } else { '2560x1440:28:0' }
+    $config['VICTORY_PRESENT_TARGET'] = if ($env:VICTORY_PRESENT_TARGET -eq 'nativo') { $null } elseif ($env:VICTORY_PRESENT_TARGET) { $env:VICTORY_PRESENT_TARGET } elseif ($tipo -eq 'SondaMateriais') { $null } else { '2560x1440:28:0' }
     $config['VICTORY_EXPAND_SCENE_HDR'] = '1'
     $config['VICTORY_INDIRECT'] = '1'
     $config['VICTORY_INDIRECT_AFTER_MESH_FRAMES'] = '90'

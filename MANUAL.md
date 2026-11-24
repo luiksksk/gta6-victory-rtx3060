@@ -2,7 +2,7 @@
 
 Este guia é para quem já tem a **instalação completa de GTA VI para Xbox**. O teste foi feito com a versão 1.0.2.1 e uma RTX 3060 de 12 GB. Você vai compilar o VIctory no seu computador e indicar onde o jogo está instalado. **O estado atual é experimental.** Já foi possível entrar na primeira missão e ouvir o áudio. Depois de “Vice City, dois anos atrás”, personagens e cenário ainda ficam escuros.
 
-Para investigar o menu invisível, usar a saída nativa e conferir quais shaders chegaram à GPU, veja os ensaios da variante SondaMateriais. [Pausa, materiais e issues](docs/pausa-e-materiais.md).
+Na variante SondaMateriais, a pausa já exibiu as seis opções em português na saída nativa da RTX 3060. A cutscene com materiais completos continua em investigação. Os comandos de reprodução e o teste de residência tardia estão no relatório. [Pausa, materiais e issues](docs/pausa-e-materiais.md).
 
 ## 1. Prepare o computador
 

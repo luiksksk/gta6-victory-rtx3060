@@ -1,0 +1,240 @@
+diff --git a/crates/victory-gpu/src/descriptor/host.rs b/crates/victory-gpu/src/descriptor/host.rs
+index d2f62eeb2c59a1cd00f3c3162b9f96bf8beea679..3d70bd7fe3889443266f323a26973ea97c47668a 100644
+--- a/crates/victory-gpu/src/descriptor/host.rs
++++ b/crates/victory-gpu/src/descriptor/host.rs
+@@ -49,6 +49,8 @@ pub(crate) struct HostHeap {
+     record_looked: [AtomicU64; 2],
+     /// The frame the oldest uploaded texture is due a look again in.
+     recheck_at: AtomicU64,
++    /// Earliest frame at which a descriptor may regain its streamed backing.
++    residency_retry_at: AtomicU64,
+ }
+ 
+ // SAFETY: D3D12 descriptor heaps and resources are free-threaded; mutable
+@@ -87,6 +89,11 @@ struct Bindless {
+     placed_set: BTreeMap<u32, (u32, u32)>,
+     /// Placed-texture slots changed since draws last prepared them.
+     record_pending: BTreeSet<u32>,
++    /// Retry a missing allocation without requiring another descriptor write.
++    /// Each entry identifies the slot generation for which residency was missing.
++    residency_retries: VecDeque<(u64, u32)>,
++    /// One outstanding retry per slot even when streaming rewrites it many times.
++    residency_keys: HashMap<u32, (u32, u32)>,
+     /// Active 256-byte-aligned bounce slices by `slot_index`.
+     cbv_bounce: HashMap<u32, BounceSlot>,
+     /// Recycled bounce slices returned when slots are cleared or overwritten.
+@@ -132,6 +139,12 @@ struct Bindless {
+ const SLOT_BUDGET_US: u64 = 8_000;
+ /// Slots taken to make at once (the rest wait without being looked at).
+ const SLOT_CHUNK: usize = 256;
++const RESIDENCY_RETRY_FRAMES: u64 = 4;
++
++enum PlacedError {
++    Stale,
++    NotResident,
++}
+ 
+ impl Bindless {
+     /// The slot-making budget, refilled for the time passed since.
+@@ -434,6 +447,7 @@ impl HostHeap {
+             record_hint: std::sync::atomic::AtomicBool::new(false),
+             record_looked: [AtomicU64::new(0), AtomicU64::new(0)],
+             recheck_at: AtomicU64::new(u64::MAX),
++            residency_retry_at: AtomicU64::new(u64::MAX),
+         };
+         // A slot never written is undefined: shaders reading one (a slot
+         // the title wrote in a way we do not know, or a table entry no
+@@ -1128,6 +1142,7 @@ impl HostHeap {
+         if !evictions
+             && !self.record_hint.load(Ordering::Acquire)
+             && self.recheck_at.load(Ordering::Acquire) > frame
++            && self.residency_retry_at.load(Ordering::Acquire) > frame
+         {
+             return;
+         }
+@@ -1146,7 +1161,7 @@ impl HostHeap {
+         // Asked before taking the heap's lock: the placed textures' lock is
+         // taken first where both are held.
+         let live = evictions.then(crate::resource::placed_live);
+-        let (todo, due) = {
++        let (todo, due, retrying) = {
+             // The submission may hold the heap's lock for a while: the work
+             // waits for a later draw rather than this one waiting.
+             let mut b = match self.bindless.try_lock() {
+@@ -1167,7 +1182,23 @@ impl HostHeap {
+                 self.record_looked[1].store(frame + 1, Ordering::Release);
+             }
+             let mut todo: Vec<(u32, Option<(u32, u32)>)> = Vec::new();
++            let mut retrying = Vec::new();
+             if b.budget()[1] > 0 {
++                if self.residency_retry_at.load(Ordering::Acquire) <= frame {
++                    for _ in 0..RECHECKS {
++                        let Some(&(due, index)) = b.residency_retries.front() else { break };
++                        if due > frame { break; }
++                        b.residency_retries.pop_front();
++                        if let Some(key) = b.residency_keys.remove(&index)
++                            && b.placed_set.get(&index) == Some(&key)
++                        {
++                            todo.push((index, Some(key)));
++                            retrying.push(index);
++                        }
++                    }
++                    let next = b.residency_retries.front().map_or(u64::MAX, |x| x.0.max(frame + 1));
++                    self.residency_retry_at.store(next, Ordering::Release);
++                }
+                 while todo.len() < SLOT_CHUNK
+                     && let Some(i) = b.record_pending.pop_first()
+                 {
+@@ -1189,13 +1220,14 @@ impl HostHeap {
+             );
+             self.record_hint
+                 .store(!b.record_pending.is_empty(), Ordering::Release);
+-            (todo, due)
++            (todo, due, retrying)
+         };
+         if todo.is_empty() && due.is_empty() {
+             return;
+         }
+         let mut stale = Vec::new();
+         let mut learnt = Vec::new();
++        let mut not_resident = Vec::new();
+         let mut reached = Vec::new();
+         let left = self.budget_left(1);
+         let mut todo = todo.into_iter();
+@@ -1216,7 +1248,8 @@ impl HostHeap {
+                     reached.push(held);
+                 }
+                 Ok(None) => {}
+-                Err(()) => stale.push(index),
++                Err(PlacedError::Stale) => stale.push(index),
++                Err(PlacedError::NotResident) => not_resident.push((index, (vi, generation))),
+             }
+         }
+         over.extend(todo.map(|(i, _)| i));
+@@ -1235,7 +1268,28 @@ impl HostHeap {
+         }
+         {
+             let mut b = self.bindless.lock().unwrap_or_else(|e| e.into_inner());
++            for &(index, (key, _)) in &learnt {
++                if retrying.contains(&index) {
++                    b.dirty.insert(index);
++                    #[cfg(feature = "diagnostics")]
++                    {
++                        static RECOVERED: AtomicU64 = AtomicU64::new(0);
++                        if RECOVERED.fetch_add(1, Ordering::Relaxed) < 32 {
++                            tracing::info!(frame, index, key, "placed texture became resident on retry");
++                        }
++                    }
++                }
++            }
+             b.recorded.extend(learnt);
++            let retry_frame = frame + RESIDENCY_RETRY_FRAMES;
++            for (index, key) in not_resident {
++                if b.placed_set.get(&index) == Some(&key)
++                    && b.residency_keys.insert(index, key).is_none()
++                {
++                    b.residency_retries.push_back((retry_frame, index));
++                    self.residency_retry_at.fetch_min(retry_frame, Ordering::Release);
++                }
++            }
+             for idx in stale {
+                 self.drop_bindless(&mut b, idx, None);
+             }
+@@ -1257,11 +1311,11 @@ impl HostHeap {
+         index: u32,
+         vi: u32,
+         generation: u32,
+-    ) -> Result<Option<crate::resource::HeldTexture>, ()> {
++    ) -> Result<Option<crate::resource::HeldTexture>, PlacedError> {
+         use windows::core::Interface;
+         let Some(view) = view_at(vi, generation) else {
+             self.clear_stale_slot(index);
+-            return Err(());
++            return Err(PlacedError::Stale);
+         };
+         let View::Placed(false, resource, desc) = &view else {
+             return Ok(None);
+@@ -1273,7 +1327,7 @@ impl HostHeap {
+         let address = u64::from(desc[10]) | u64::from(desc[11]) << 32;
+         if !valid_title_address(address, 1) {
+             self.set_unmapped_null(index, &view);
+-            return Ok(None);
++            return if plausible(address, 1) { Err(PlacedError::NotResident) } else { Ok(None) };
+         }
+         let Some((shader_view, held)) = placed_texture(&view) else {
+             self.set_unmapped_null(index, &view);
+@@ -2300,9 +2354,34 @@ void main() {
+     /// writes back to title memory, and map null/invalid addresses safely to 0.
+     #[test]
+     fn bindless_slots_materialize_refresh_and_copy_back_on_gpu() {
++        exercise_bindless_slots(false);
++    }
++
++    #[test]
++    fn late_placed_texture_becomes_visible_without_rewriting_its_slot() {
++        exercise_bindless_slots(true);
++    }
++
++    fn exercise_bindless_slots(late: bool) {
++        use windows_sys::Win32::System::Memory::{
++            MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
++        };
++        struct Reservation(*mut std::ffi::c_void);
++        impl Drop for Reservation {
++            fn drop(&mut self) {
++                // SAFETY: this test owns the complete reservation.
++                unsafe { VirtualFree(self.0, 0, MEM_RELEASE) };
++            }
++        }
+         let Some(host) = host() else {
++            assert!(!late, "the delayed residency test requires a D3D12 device");
+             return;
+         };
++        let reserved = late.then(|| {
++            let address = unsafe { VirtualAlloc(std::ptr::null(), 64 << 10, MEM_RESERVE, PAGE_READWRITE) };
++            assert!(!address.is_null());
++            Reservation(address)
++        });
+         let (title_heap, base) = make_shader_heap(16);
+         let slot_handle = |i: u64| base + i * 32;
+ 
+@@ -2313,7 +2392,7 @@ void main() {
+         let cbv_16b_addr = mem_base + 0x30; // 16B-aligned, NOT 256B-aligned!
+         let copy_srv_addr = mem_base + 0x1000;
+         let uav_addr = mem_base + 0x2000;
+-        let placed_tex_addr = mem_base + (64 << 10);
++        let placed_tex_addr = reserved.as_ref().map_or(mem_base + (64 << 10), |r| r.0 as u64);
+ 
+         let srv_res = make_title_buffer(srv_addr, 256, false);
+         let copy_srv_res = make_title_buffer(copy_srv_addr, 256, false);
+@@ -2327,7 +2406,9 @@ void main() {
+             (copy_srv_addr as *mut u32).write(0xCAFE_1234);
+             (uav_addr as *mut [u32; 8]).write([0; 8]);
+             // First pixel of linear 4x4 RGBA8 placed texture at `placed_tex_addr`.
+-            (placed_tex_addr as *mut [u8; 4]).write([0x12, 0x34, 0x56, 0x78]);
++            if !late {
++                (placed_tex_addr as *mut [u8; 4]).write([0x12, 0x34, 0x56, 0x78]);
++            }
+         }
+ 
+         // Raw ByteAddressBuffer SRV/UAV descriptions in host D3D12 layout.
+@@ -2481,6 +2562,19 @@ void main() {
+         host.execute(&[&list]);
+         list.reset();
+ 
++        if let Some(reservation) = &reserved {
++            // No descriptor rewrite: only the memory backing the texture becomes resident.
++            unsafe {
++                assert_eq!((uav_addr as *const [u32; 5]).read_volatile()[2], 0);
++                assert_eq!(VirtualAlloc(reservation.0, 64 << 10, MEM_COMMIT, PAGE_READWRITE), reservation.0);
++                (placed_tex_addr as *mut [u8; 4]).write([0x12, 0x34, 0x56, 0x78]);
++            }
++            for _ in 0..4 { crate::queue::pass_frame(); }
++            record_probe(&list);
++            host.execute(&[&list]);
++            list.reset();
++        }
++
+         // SAFETY: GPU finished and `Host::execute` copied UAV writes back to `uav_addr`.
+         let out1 = unsafe { (uav_addr as *const [u32; 5]).read_volatile() };
+         assert_eq!(
