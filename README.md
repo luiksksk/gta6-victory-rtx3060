@@ -6,6 +6,8 @@ Scripts para compilar o VIctory no Windows e iniciar a instalação local de GTA
 
 ## Até onde o jogo chegou
 
+Quem está investigando texturas, iluminação, personagens ou uso da GPU já pode compilar a variante experimental `Materiais` e comparar o resultado com a rua em cores planas. [Guia técnico e medições](docs/materiais-rtx3060.md) · [Issue da equipe](https://github.com/luiksksk/gta6-victory-rtx3060/issues/2)
+
 **Para ver a rua em 3D, use a variante experimental `CoresPlanas`.** Em modo Series X na RTX 3060, a janela mostrou a pista, postes, fios e a estrutura de um prédio com a câmera em movimento. Parte das superfícies continua preta. [Manual de cores planas](MANUAL.md#mostrar-a-rua-em-cores-planas)
 
 Em modo Series X, a variante experimental `Geometria` mostrou na janela uma silhueta humana, cabos e partes da rua. Ela exibe um alvo de cor intermediário do jogo após a primeira submissão de malhas. A iluminação e grande parte do cenário continuam ausentes. Em um teste separado, os shaders locais 2400, 2401 e 2402 passaram pelo validador e pelo driver na integração #414. [Como experimentar](MANUAL.md#ver-a-geometria-da-cena) · [Resultados por shader](docs/geometria-e-wave64.md)

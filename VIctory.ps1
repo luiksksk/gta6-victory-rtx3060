@@ -3,7 +3,7 @@
 param(
     [ValidateSet('Compilar','Executar','Config','PrepararShaders')]
     [string]$Acao = 'Executar',
-    [ValidateSet('Execucao','Diagnostico','SondaHDR','Geometria','CoresPlanas')]
+    [ValidateSet('Execucao','Diagnostico','SondaHDR','Geometria','CoresPlanas','Materiais')]
     [string]$Variante = 'Execucao',
     [string]$PastaJogo,
     [string]$PerfilOrigem,
@@ -19,6 +19,7 @@ $arvores = @{
     SondaHDR = 'e3a6fc73fdd78b4d0d8a1e74d979f029b60e40a8'
     Geometria = '85ae3d3dc2cb0770950a3c5cccaf78d694af3f98'
     CoresPlanas = '9d796cbc1f369c9101d3e0123eb27dde574f1190'
+    Materiais = '6fc6ceb882461675a417fe9160a194aea8df43ea'
 }
 # PowerShell accepts case-insensitive parameter values. Keep paths canonical.
 $tipo = switch ($Variante) {
@@ -26,10 +27,11 @@ $tipo = switch ($Variante) {
     'SondaHDR' { 'SondaHDR' }
     'Geometria' { 'Geometria' }
     'CoresPlanas' { 'CoresPlanas' }
+    'Materiais' { 'Materiais' }
     default { 'Execucao' }
 }
 if ($tipo -eq 'SondaHDR') { $base = '35b054ec038c11bc8a0de66b1eee764b1ad4f101' }
-if ($tipo -in @('Geometria','CoresPlanas')) { $base = '97c78d1087808bd6ce5eabb5d566083a38406a90' }
+if ($tipo -in @('Geometria','CoresPlanas','Materiais')) { $base = '97c78d1087808bd6ce5eabb5d566083a38406a90' }
 $arvore = $arvores[$tipo]
 $raiz = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'VIctory-RTX3060-Publico'
 $fontes = Join-Path $raiz 'fontes'
@@ -68,7 +70,7 @@ function Get-PatchedSource {
             Invoke-Git @('-C',$tmp,'checkout','--quiet','--detach','FETCH_HEAD')
             $patches = switch ($tipo) {
                 'Geometria' { 'geometria-97c78d10.patch' }
-                'CoresPlanas' { 'geometria-97c78d10.patch'; 'cores-planas.patch' }
+                { $_ -in @('CoresPlanas','Materiais') } { 'geometria-97c78d10.patch'; 'cores-planas.patch' }
                 'SondaHDR' { 'sonda-hdr-35b054ec.patch' }
                 'Diagnostico' { 'execucao-rtx3060.patch'; 'diagnostico-cena.patch' }
                 default { 'execucao-rtx3060.patch' }
@@ -81,6 +83,10 @@ function Get-PatchedSource {
             # insertion is anchored on the function signature and verified below.
             $preparo = Join-Path (Join-Path $PSScriptRoot 'patches') 'preparacao-shaders.patch'
             Invoke-Git @('-C',$tmp,'apply','--index','--unidiff-zero','--whitespace=error-all',$preparo)
+            if ($tipo -eq 'Materiais') {
+                $materiais = Join-Path (Join-Path $PSScriptRoot 'patches') 'materiais-wave32.patch'
+                Invoke-Git @('-C',$tmp,'apply','--index','--whitespace=error-all',$materiais)
+            }
             if ((Invoke-Git @('-C',$tmp,'write-tree')) -ne $arvore) {
                 throw 'A fonte preparada divergiu da versao testada.'
             }
@@ -139,7 +145,7 @@ if ($Acao -eq 'Compilar') {
     Push-Location -LiteralPath $fonte
     $dxcAnterior = $env:VICTORY_GEOMETRIA_DXC
     try {
-        if ($tipo -eq 'CoresPlanas' -and !$dxcAnterior) {
+        if ($tipo -in @('CoresPlanas','Materiais') -and !$dxcAnterior) {
             $dxc = Get-Command dxc.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($dxc) { $env:VICTORY_GEOMETRIA_DXC = $dxc.Source }
             else {
@@ -150,7 +156,7 @@ if ($Acao -eq 'Compilar') {
                 }
                 $sdk = $compiladores | Where-Object { $_.Directory.Parent.Name -match '^\d+(\.\d+){1,3}$' } |
                     Sort-Object { [version]$_.Directory.Parent.Name } -Descending | Select-Object -First 1
-                if (!$sdk) { throw 'A variante CoresPlanas requer dxc.exe do Windows SDK. Instale o SDK ou indique o caminho em VICTORY_GEOMETRIA_DXC.' }
+                if (!$sdk) { throw "A variante $tipo requer dxc.exe do Windows SDK. Instale o SDK ou indique o caminho em VICTORY_GEOMETRIA_DXC." }
                 $env:VICTORY_GEOMETRIA_DXC = $sdk.FullName
             }
         }
@@ -188,7 +194,7 @@ if ($tipo -eq 'Execucao') {
     $config['VICTORY_LIVE_KEYS'] = $null
 }
 $anterior = @{}
-if ($tipo -in @('Geometria','CoresPlanas')) {
+if ($tipo -in @('Geometria','CoresPlanas','Materiais')) {
     $config['VICTORY_LOW_VA_MIB'] = '512'
     $config['VICTORY_PREWARM_LOG'] = Join-Path (Join-Path $PSScriptRoot 'docs') 'pipelines-geometria.txt'
     $config['VICTORY_PRESENT_TARGET'] = if ($env:VICTORY_PRESENT_TARGET) { $env:VICTORY_PRESENT_TARGET } else { '2560x1440:28:0' }
@@ -201,6 +207,12 @@ if ($tipo -eq 'CoresPlanas') {
     $config['VICTORY_SINGLE_LIST'] = '1'
     $config['VICTORY_INDIRECT'] = $null
     $config['VICTORY_SHADER_LOOP_LIMIT'] = '32'
+}
+if ($tipo -eq 'Materiais') {
+    $config['VICTORY_FLAT_GEOMETRY'] = $null
+    $config['VICTORY_SINGLE_LIST'] = $null
+    $config['VICTORY_SHADER_LOOP_LIMIT'] = '32'
+    $config['VICTORY_INDIRECT_AFTER_MESH_FRAMES'] = '24'
 }
 foreach ($nome in $config.Keys) { $anterior[$nome] = [Environment]::GetEnvironmentVariable($nome) }
 function Set-ProcessEnvironment([string]$Nome, $Valor) {

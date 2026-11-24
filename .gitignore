@@ -31,3 +31,6 @@
 !/patches/shaders-414-189.patch
 !/patches/descritor-escalar-233.patch
 !/patches/malhas-e-dred.patch
+!/patches/materiais-wave32.patch
+!/patches/uploads-texturas-alteradas.patch
+!/docs/materiais-rtx3060.md

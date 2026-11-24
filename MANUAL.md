@@ -91,8 +91,11 @@ Na pasta do repositório, execute os dois comandos abaixo. O compilador `dxc.exe
 
 A primeira execução prepara o catálogo de shaders antes de abrir o jogo. O perfil e o cache ficam na pasta da variante. Para usar uma cópia de um perfil já configurado, acrescente `-PerfilOrigem` conforme a seção anterior.
 
-## Se algo impedir o início
+### Testar os materiais do jogo
 
+Para testar os shaders de pixels do jogo com texturas indexadas, use a variante experimental `Materiais`. O guia da equipe inclui os comandos, os resultados e a issue de colaboração. [Testar materiais e iluminação](docs/materiais-rtx3060.md#reproduzir)
+
+## Se algo impedir o início
 
 | O que apareceu | O que fazer |
 | --- | --- |
